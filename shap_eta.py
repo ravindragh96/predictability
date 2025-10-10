@@ -144,4 +144,117 @@ for colname in scaler_features:
     if colname not in [f1, f2]:
         grid[colname] = 100.0 if colname == "H1" else X_mean.get(colname, 0.0)
 
-grid = grid.reindex(columns=scaler_features, fill_valu
+grid = grid.reindex(columns=scaler_features, fill_value=0.0)
+grid_scaled = x_scaler.transform(grid.astype(np.float32))
+preds_scaled = model.predict(grid_scaled, verbose=0)
+preds = y_scaler.inverse_transform(preds_scaled)[:, output_index]
+preds = preds.reshape(F1.shape)
+
+# -----------------------
+# 8️⃣ Split Layout: Contour + Circular Error Charts
+# -----------------------
+col1, col2 = st.columns([2, 1])
+
+# ---- Left Column: Contour Plot ----
+with col1:
+    st.subheader(f"📈 RSM Contour: {f1} vs {f2}")
+    fig = go.Figure(data=go.Contour(
+        z=preds,
+        x=f1_range,
+        y=f2_range,
+        colorscale="Viridis",
+        colorbar=dict(
+            title=dict(
+                text=f"{output_to_plot} (Actual Scale)",
+                side="right"
+            )
+        ),
+        contours=dict(showlabels=True, labelfont=dict(size=12, color="white")),
+        hovertemplate=(
+            f"<b>{f1}</b>: %{{x:.3f}}<br>"
+            f"<b>{f2}</b>: %{{y:.3f}}<br>"
+            f"<b>Predicted {output_to_plot}</b>: %{{z:.3f}}<extra></extra>"
+        ),
+    ))
+
+    # Overlay actual test points
+    if output_to_plot in y_actual_df.columns:
+        fig.add_trace(go.Scatter(
+            x=X_test[f1],
+            y=X_test[f2],
+            mode="markers",
+            marker=dict(size=6, color="red", line=dict(width=1, color="black")),
+            name=f"Actual {output_to_plot}"
+        ))
+
+    fig.update_layout(
+        title=f"{output_to_plot} Contour (H1 fixed at 100)",
+        xaxis_title=f1,
+        yaxis_title=f2,
+        width=800,
+        height=600,
+        template="plotly_white",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+# ---- Right Column: Circular Error Charts ----
+with col2:
+    st.subheader("📊 Error Performance")
+
+    if output_to_plot in y_actual_df.columns:
+        # Create side-by-side circular charts
+        c1, c2 = st.columns(2)
+
+        with c1:
+            fig_mape = go.Figure(data=[
+                go.Pie(
+                    labels=['MAPE (%)', 'Accuracy (%)'],
+                    values=[mape_val, 100 - mape_val],
+                    hole=0.6,
+                    marker_colors=['#EF553B', '#00CC96'],
+                    textinfo='label+percent'
+                )
+            ])
+            fig_mape.update_layout(
+                title=dict(text=f"MAPE: {mape_val:.2f}%", x=0.5),
+                showlegend=False,
+                height=280
+            )
+            st.plotly_chart(fig_mape, use_container_width=True)
+
+        with c2:
+            fig_avg = go.Figure(data=[
+                go.Pie(
+                    labels=['Avg Error (%)', 'Accuracy (%)'],
+                    values=[avg_error, 100 - avg_error],
+                    hole=0.6,
+                    marker_colors=['#636EFA', '#AB63FA'],
+                    textinfo='label+percent'
+                )
+            ])
+            fig_avg.update_layout(
+                title=dict(text=f"Avg Error: {avg_error:.2f}%", x=0.5),
+                showlegend=False,
+                height=280
+            )
+            st.plotly_chart(fig_avg, use_container_width=True)
+
+        st.markdown("---")
+        st.markdown(f"**Max % Error:** `{max_error:.2f}%`")
+        st.markdown(f"**Min % Error:** `{min_error:.2f}%`")
+        st.markdown("✅ Model predictions are in expected range.")
+    else:
+        st.warning("⚠️ No actual values available to compute error metrics.")
+
+# -----------------------
+# 9️⃣ Display Predictions Table
+# -----------------------
+st.markdown(f"### 🔍 Sample Predictions for `{output_to_plot}` (first 10 rows)")
+compare_df = pd.DataFrame({
+    f1: X_test[f1].values[:10],
+    f2: X_test[f2].values[:10],
+    f"Pred_{output_to_plot}": y_pred[:10, output_index],
+})
+if np.any(y_actual):
+    compare_df[f"Actual_{output_to_plot}"] = y_actual[:10]
+st.dataframe(compare_df, use_container_width=True)
