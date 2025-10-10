@@ -1,3 +1,14 @@
+KeyError: 'Angle_Metal_BA_I_'
+Traceback:
+File "C:\Users\gantrav01\RD_predictability_11925\rsm_tau_fin.py", line 135, in <module>
+    f2_range = np.linspace(X_test[f2].min(), X_test[f2].max(), 60)
+                           ~~~~~~^^^^
+File "C:\Users\gantrav01\AppData\Local\anaconda3\Lib\site-packages\pandas\core\frame.py", line 4107, in __getitem__
+    indexer = self.columns.get_loc(key)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^
+File "C:\Users\gantrav01\AppData\Local\anaconda3\Lib\site-packages\pandas\core\indexes\base.py", line 3819, in get_loc
+    raise KeyError(key) from err
+
 #!/usr/bin/env python
 # coding: utf-8
 
