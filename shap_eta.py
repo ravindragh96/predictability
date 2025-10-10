@@ -11,10 +11,10 @@ import joblib
 from sklearn.metrics import mean_absolute_percentage_error
 
 # -----------------------
-# 1️⃣ Setup & Paths
+# 1️⃣ Setup
 # -----------------------
-st.set_page_config(page_title="RSM 2D Contour App", layout="wide")
-st.title("🎛️ Response Surface Modeling (RSM) — 2D Contour Visualization")
+st.set_page_config(page_title="RSM Contour App (Original Names)", layout="wide")
+st.title("🎛️ Response Surface Modeling (RSM) — Original Column Names Preserved")
 
 BASE_DIR = r"C:\Users\gantrav01\RD_predictability_11925"
 
@@ -26,21 +26,21 @@ X_SCALER_PATH = os.path.join(BASE_DIR, "x_eta_scaler.pkl")
 Y_SCALER_PATH = os.path.join(BASE_DIR, "y_eta_scaler.pkl")
 
 # -----------------------
-# 2️⃣ Load Data without cleaning columns
+# 2️⃣ Load Data (NO COLUMN CLEANING)
 # -----------------------
 X_train = pd.read_excel(TRAIN_X_PATH)
 y_train = pd.read_excel(TRAIN_Y_PATH)
 t33_df = pd.read_excel(TEST_PATH)
 
+# Extract matching columns
 feature_cols = [c for c in X_train.columns if c in t33_df.columns]
 X_test = t33_df[feature_cols]
-
 target_cols = [c for c in y_train.columns if c in t33_df.columns]
 y_actual_df = t33_df[target_cols] if target_cols else pd.DataFrame()
 
 # Force H1 constant = 100
-if "h1" in X_test.columns:
-    X_test["h1"] = 100.0
+if "H1" in X_test.columns:
+    X_test["H1"] = 100.0
 
 # -----------------------
 # 3️⃣ Load Model & Scalers
@@ -61,61 +61,62 @@ except Exception as e:
     st.stop()
 
 # -----------------------
-# 4️⃣ Sidebar Controls
+# 4️⃣ Verify Feature Alignment
 # -----------------------
-st.sidebar.header("⚙️ Select RSM Inputs")
+if hasattr(x_scaler, "feature_names_in_"):
+    scaler_features = list(x_scaler.feature_names_in_)
+else:
+    scaler_features = list(X_train.columns)
 
-feature_x = st.sidebar.selectbox("Select Feature X (horizontal axis)", feature_cols, index=0)
-feature_y = st.sidebar.selectbox("Select Feature Y (vertical axis)", feature_cols, index=1)
-target_option = st.sidebar.selectbox("Select Target Output", list(y_train.columns))
+missing_in_test = [c for c in scaler_features if c not in X_test.columns]
+extra_in_test = [c for c in X_test.columns if c not in scaler_features]
 
-if feature_x == feature_y:
-    st.warning("Please select two **distinct** features for X and Y.")
+st.sidebar.subheader("🧩 Feature Alignment Check")
+st.sidebar.write(f"Scaler trained with {len(scaler_features)} features")
+st.sidebar.write(f"Test data has {len(X_test.columns)} features")
+
+if missing_in_test:
+    st.sidebar.warning(f"⚠️ Missing in test data: {missing_in_test}")
+if extra_in_test:
+    st.sidebar.info(f"ℹ️ Extra columns in test data: {extra_in_test}")
+
+# Fill missing columns safely
+X_mean = X_test.mean(numeric_only=True)
+for col in missing_in_test:
+    if col == "H1":
+        X_test[col] = 100.0
+    else:
+        X_test[col] = X_mean.mean()
+
+# Reindex columns to match scaler order
+X_test = X_test.reindex(columns=scaler_features, fill_value=0.0)
+
+# -----------------------
+# 5️⃣ Sidebar Controls
+# -----------------------
+st.sidebar.header("⚙️ RSM Visualization Controls")
+feature_x = st.sidebar.selectbox("Select Feature X", [""] + scaler_features)
+feature_y = st.sidebar.selectbox("Select Feature Y", [""] + scaler_features)
+target_option = st.sidebar.selectbox("Select Target Output", [""] + list(y_train.columns))
+
+if not feature_x or not feature_y or feature_x == feature_y:
+    st.warning("Please select two distinct features for X and Y.")
     st.stop()
 
 if not target_option:
     st.warning("Please select a target output.")
     st.stop()
 
-# -----------------------
-# 5️⃣ Prepare Test Data
-# -----------------------
 output_to_plot = target_option
 output_index = y_train.columns.get_loc(output_to_plot)
 
-if hasattr(x_scaler, "feature_names_in_"):
-    all_features = list(x_scaler.feature_names_in_)
-else:
-    all_features = list(X_train.columns)
-
-# Align & fill missing columns in X_test
-X_mean = X_test.mean(numeric_only=True)
-for col in all_features:
-    if col not in X_test.columns:
-        X_test[col] = 100.0 if col.lower() == "h1" else X_mean.mean()
-
-X_test = X_test.reindex(columns=all_features, fill_value=0.0)
-
 # -----------------------
-# Validate selected features exist in columns
-# -----------------------
-f1, f2 = feature_x, feature_y
-
-if f1 not in X_test.columns or f2 not in X_test.columns:
-    st.error(f"Selected features '{f1}' or '{f2}' not found in test data columns.")
-    st.write("Columns available:", list(X_test.columns))
-    st.stop()
-
-# -----------------------
-# Scale test data and predict
+# 6️⃣ Predict Test Data
 # -----------------------
 X_test_scaled = x_scaler.transform(X_test.astype(np.float32))
 y_pred_scaled = model.predict(X_test_scaled, verbose=0)
 y_pred = y_scaler.inverse_transform(y_pred_scaled)
 
-# -----------------------
-# 6️⃣ Compute MAPE
-# -----------------------
 if output_to_plot in y_actual_df.columns:
     y_actual = y_actual_df[output_to_plot].values
     eps = 1e-8
@@ -126,20 +127,24 @@ else:
     st.warning(f"⚠️ No actual values for {output_to_plot} found — skipping MAPE check.")
 
 # -----------------------
-# 7️⃣ Build Contour Grid (safe)
+# 7️⃣ Contour Grid (Preserve Original Names)
 # -----------------------
+f1, f2 = feature_x, feature_y
+if f1 not in X_test.columns or f2 not in X_test.columns:
+    st.error(f"❌ One of the selected features ({f1} or {f2}) is not found in test data.")
+    st.stop()
+
 f1_range = np.linspace(X_test[f1].min(), X_test[f1].max(), 60)
 f2_range = np.linspace(X_test[f2].min(), X_test[f2].max(), 60)
 F1, F2 = np.meshgrid(f1_range, f2_range)
 
 grid = pd.DataFrame({f1: F1.ravel(), f2: F2.ravel()})
-for colname in all_features:
+for colname in scaler_features:
     if colname not in [f1, f2]:
-        grid[colname] = 100.0 if colname.lower() == "h1" else X_mean.get(colname, 0.0)
+        grid[colname] = 100.0 if colname == "H1" else X_mean.get(colname, 0.0)
 
-grid = grid.reindex(columns=all_features, fill_value=0.0)
+grid = grid.reindex(columns=scaler_features, fill_value=0.0)
 grid_scaled = x_scaler.transform(grid.astype(np.float32))
-
 preds_scaled = model.predict(grid_scaled, verbose=0)
 preds = y_scaler.inverse_transform(preds_scaled)[:, output_index]
 preds = preds.reshape(F1.shape)
@@ -168,14 +173,7 @@ if output_to_plot in y_actual_df.columns:
         y=X_test[f2],
         mode="markers",
         marker=dict(size=6, color="red", line=dict(width=1, color="black")),
-        name=f"Actual {output_to_plot}",
-        text=[
-            f"<b>{f1}:</b>{X_test.at[i,f1]:.3f}<br>"
-            f"<b>{f2}:</b>{X_test.at[i,f2]:.3f}<br>"
-            f"<b>Actual {output_to_plot}:</b>{y_actual_df[output_to_plot].iloc[i]:.3f}"
-            for i in range(len(X_test))
-        ],
-        hoverinfo="text"
+        name=f"Actual {output_to_plot}"
     ))
 
 fig.update_layout(
@@ -186,11 +184,10 @@ fig.update_layout(
     height=650,
     template="plotly_white",
 )
-
 st.plotly_chart(fig, use_container_width=True)
 
 # -----------------------
-# 9️⃣ Display Sample Table
+# 9️⃣ Display Predictions Table
 # -----------------------
 st.markdown(f"### 🔍 Sample Predictions for `{output_to_plot}` (first 10 rows)")
 compare_df = pd.DataFrame({
