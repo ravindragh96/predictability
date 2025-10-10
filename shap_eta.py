@@ -1,3 +1,90 @@
+import streamlit as st
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler
+
+# -----------------------
+# Load your data and model
+# -----------------------
+# Replace with your paths
+# X_train, X_test, y_test, model = ...
+# Assume model is your trained ANN
+
+st.set_page_config(page_title="RSM Visualization App", layout="wide")
+
+st.title("🎛️ Response Surface Modeling (RSM) Interactive App")
+
+# -----------------------
+# Sidebar controls
+# -----------------------
+st.sidebar.header("Select Features for RSM")
+
+all_features = X_test.columns.tolist()
+feature_x = st.sidebar.selectbox("Select Feature X", all_features, index=0)
+feature_y = st.sidebar.selectbox("Select Feature Y", all_features, index=1)
+
+# Keep h1 constant (you can define it explicitly)
+h1_value = 100
+st.sidebar.write(f"Constant h1 = {h1_value}")
+
+# -----------------------
+# Prepare grid for RSM
+# -----------------------
+x_range = np.linspace(X_test[feature_x].min(), X_test[feature_x].max(), 40)
+y_range = np.linspace(X_test[feature_y].min(), X_test[feature_y].max(), 40)
+
+xx, yy = np.meshgrid(x_range, y_range)
+grid = pd.DataFrame({feature_x: xx.ravel(), feature_y: yy.ravel()})
+
+# Keep all other features constant at their mean
+for col in X_test.columns:
+    if col not in [feature_x, feature_y]:
+        grid[col] = X_test[col].mean()
+
+# Add constant h1 column if applicable
+if "h1" in X_test.columns:
+    grid["h1"] = h1_value
+
+# -----------------------
+# Model Predictions
+# -----------------------
+y_pred_grid = model.predict(grid)
+y_pred_grid = np.array(y_pred_grid).flatten()
+zz = y_pred_grid.reshape(xx.shape)
+
+# -----------------------
+# Layout
+# -----------------------
+col1, col2 = st.columns(2)
+
+# ---- Left: 2D RSM Plot ----
+with col1:
+    st.subheader("📈 RSM 2D Visualization")
+    fig, ax = plt.subplots(figsize=(6,5))
+    contour = ax.contourf(xx, yy, zz, cmap="viridis")
+    cbar = plt.colorbar(contour)
+    cbar.set_label("Predicted T1")
+    ax.set_xlabel(feature_x)
+    ax.set_ylabel(feature_y)
+    ax.set_title("Response Surface of Predicted T1")
+    st.pyplot(fig)
+
+# ---- Right: Actual vs Predicted ----
+with col2:
+    st.subheader("📊 Actual vs Predicted T1 (Test Data)")
+    y_pred_test = model.predict(X_test)
+    df_results = pd.DataFrame({
+        "Actual_T1": y_test.flatten(),
+        "Predicted_T1": y_pred_test.flatten()
+    })
+    # Optional: add chosen features for reference
+    df_results[feature_x] = X_test[feature_x].values
+    df_results[feature_y] = X_test[feature_y].values
+    st.dataframe(df_results[[feature_x, feature_y, "Actual_T1", "Predicted_T1"]].head(15))
+
+
+
 #!/usr/bin/env python
 # coding: utf-8
 
