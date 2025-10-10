@@ -1,44 +1,4 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-import streamlit as st
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-from sklearn.preprocessing import StandardScaler
-import os
-import tensorflow as tf
-import shap
-import plotly.graph_objects as go
-import plotly.io as pio
-
-# -----------------------
-# Load your data and model
-# -----------------------
-os.chdir(r'C:\Users\gantrav01\RD_predictability_11925')
-
-# Load training and test data
-X_train = pd.read_excel(r'H_vs_Tau_training.xlsx')
-y_train = pd.read_excel(r'H_vs_Tau_target.xlsx')
-t33_df = pd.read_excel(r'Copy of T33_100_Samples_for_testing.xlsx')
-
-# Clean column names
-X_train.columns = X_train.columns.str.strip().str.replace('[^A-Za-z0-9]+', ' ', regex=True)
-y_train.columns = y_train.columns.str.strip().str.replace('[^A-Za-z0-9]+', ' ', regex=True)
-t33_df.columns = t33_df.columns.str.strip().str.replace('[^A-Za-z0-9]+', ' ', regex=True)
-
-# Extract test features (same columns as X_train)
-X_test = t33_df[X_train.columns]
-
-# Extract actual target columns (if available)
-target_columns = [col for col in y_train.columns if col in t33_df.columns]
-y_actual_df = t33_df[target_columns] if target_columns else pd.DataFrame()
-
-# Convert to numpy for model prediction
-X_test_np = X_test.values.astype(np.float32)
-
-# Load trained ANN model
-chk_path = r'checkpoints/h_vs_tau_best_model#!/usr/bin/env python
+##!/usr/bin/env python
 # coding: utf-8
 
 import streamlit as st
@@ -65,8 +25,8 @@ X_train.columns = X_train.columns.str.strip().str.replace('[^A-Za-z0-9]+', ' ', 
 y_train.columns = y_train.columns.str.strip().str.replace('[^A-Za-z0-9]+', ' ', regex=True)
 t33_df.columns = t33_df.columns.str.strip().str.replace('[^A-Za-z0-9]+', ' ', regex=True)
 
-# Extract test features and actual targets (if available)
-X_test = t33_df[X_train.columns]
+# Extract test features and targets if available
+X_test = t33_df[X_train.columns.intersection(t33_df.columns)]
 target_columns = [col for col in y_train.columns if col in t33_df.columns]
 y_actual_df = t33_df[target_columns] if target_columns else pd.DataFrame()
 
@@ -76,7 +36,7 @@ X_test_np = X_test.values.astype(np.float32)
 # Load model and scalers
 chk_path = r'checkpoints/h_vs_tau_best_model.keras'
 model = tf.keras.models.load_model(chk_path)
-x_scaler = joblib.load(r'x_eta_scaler.pkl')  # or correct scaler for Tau if saved separately
+x_scaler = joblib.load(r'x_eta_scaler.pkl')  # ensure correct path if different for Tau
 y_scaler = joblib.load(r'y_eta_scaler.pkl')
 
 # -----------------------
@@ -87,22 +47,25 @@ st.title("🎛️ Response Surface Modeling (RSM) Interactive App")
 
 st.sidebar.header("⚙️ RSM Controls")
 
-all_features = X_test.columns.tolist()
+all_features = X_train.columns.tolist()
 
-# No defaults selected now
+# No defaults selected
 feature_x = st.sidebar.selectbox("Select Feature X", [""] + all_features, index=0)
 feature_y = st.sidebar.selectbox("Select Feature Y", [""] + all_features, index=0)
 
+# Allow user to pick which output target to visualize
 if len(y_train.columns) > 1:
     selected_target = st.sidebar.selectbox("Select Target", y_train.columns.tolist(), index=0)
 else:
     selected_target = y_train.columns[0]
 
-# Constant h1 if applicable
+# Keep h1 constant if applicable
 h1_value = 100
 st.sidebar.write(f"Constant h1 = {h1_value}")
 
-# Only proceed if both features selected
+# -----------------------
+# RSM Logic (after selections)
+# -----------------------
 if feature_x and feature_y and feature_x != feature_y:
 
     # -----------------------
@@ -114,28 +77,45 @@ if feature_x and feature_y and feature_x != feature_y:
 
     grid = pd.DataFrame({feature_x: xx.ravel(), feature_y: yy.ravel()})
 
-    # Keep others constant at mean
-    for col in X_test.columns:
+    # Fill other columns with mean
+    for col in X_train.columns:
         if col not in [feature_x, feature_y]:
-            grid[col] = X_test[col].mean()
+            grid[col] = X_test[col].mean() if col in X_test.columns else X_train[col].mean()
 
-    # Add constant h1 if available
-    if "h1" in X_test.columns:
+    # Add constant h1 if exists
+    if "h1" in X_train.columns:
         grid["h1"] = h1_value
 
-    # Scale input features
+    # -----------------------
+    # Ensure Feature Alignment
+    # -----------------------
+    scaler_features = (
+        list(x_scaler.feature_names_in_) if hasattr(x_scaler, "feature_names_in_")
+        else list(X_train.columns)
+    )
+
+    # Align both grid and X_test columns with scaler
+    grid = grid.reindex(columns=scaler_features, fill_value=X_train.mean().iloc[0])
+    X_test = X_test.reindex(columns=scaler_features, fill_value=X_train.mean().iloc[0])
+
+    # -----------------------
+    # Scale and Predict
+    # -----------------------
     grid_scaled = x_scaler.transform(grid)
+    X_test_scaled = x_scaler.transform(X_test)
 
-    # -----------------------
-    # Predictions
-    # -----------------------
-    y_pred_scaled = model.predict(grid_scaled)
-    y_pred = y_scaler.inverse_transform(y_pred_scaled)
+    y_pred_grid_scaled = model.predict(grid_scaled)
+    y_pred_test_scaled = model.predict(X_test_scaled)
 
+    # Inverse transform predictions
+    y_pred_grid = y_scaler.inverse_transform(y_pred_grid_scaled)
+    y_pred_test = y_scaler.inverse_transform(y_pred_test_scaled)
+
+    # Select output index
     output_index = y_train.columns.get_loc(selected_target)
-    z = y_pred[:, output_index].reshape(xx.shape)
+    z = y_pred_grid[:, output_index].reshape(xx.shape)
 
-    # Scale bar range (actual prediction range)
+    # Colorbar range (actual)
     vmin, vmax = z.min(), z.max()
 
     # -----------------------
@@ -149,7 +129,7 @@ if feature_x and feature_y and feature_x != feature_y:
         fig, ax = plt.subplots(figsize=(6, 5))
         contour = ax.contourf(xx, yy, z, cmap="viridis", levels=20, vmin=vmin, vmax=vmax)
         cbar = plt.colorbar(contour)
-        cbar.set_label(f"Predicted {selected_target} (actual scale)")
+        cbar.set_label(f"Predicted {selected_target} (Actual Scale)")
         ax.set_xlabel(feature_x)
         ax.set_ylabel(feature_y)
         ax.set_title(f"Response Surface of {selected_target}")
@@ -159,12 +139,6 @@ if feature_x and feature_y and feature_x != feature_y:
     with col2:
         st.subheader(f"📊 Actual vs Predicted {selected_target} (Test Data)")
 
-        # Scale X_test and predict
-        X_test_scaled = x_scaler.transform(X_test)
-        y_pred_test_scaled = model.predict(X_test_scaled)
-        y_pred_test = y_scaler.inverse_transform(y_pred_test_scaled)
-
-        # Actual target
         if not y_actual_df.empty and selected_target in y_actual_df.columns:
             y_actual = y_actual_df[selected_target].values
         else:
@@ -172,28 +146,34 @@ if feature_x and feature_y and feature_x != feature_y:
 
         # Compute error metrics
         eps = 1e-8
-        error_t1 = np.mean(np.abs((y_actual - y_pred_test[:, output_index]) / (y_actual + eps))) * 100 if np.any(y_actual) else np.nan
-        overall_error = np.mean(np.abs((y_scaler.inverse_transform(y_scaler.transform(y_train)) - y_pred_test) / (y_scaler.inverse_transform(y_scaler.transform(y_train)) + eps))) * 100
+        if np.any(y_actual):
+            t1_error = np.mean(np.abs((y_actual - y_pred_test[:, output_index]) / (y_actual + eps))) * 100
+        else:
+            t1_error = np.nan
 
-        st.write(f"**T1 Error %:** {error_t1:.2f}%")
+        overall_error = np.mean(
+            np.abs(
+                (y_scaler.inverse_transform(y_scaler.transform(y_train)) - y_pred_test)
+                / (y_scaler.inverse_transform(y_scaler.transform(y_train)) + eps)
+            )
+        ) * 100
+
+        st.write(f"**T1 Error %:** {t1_error:.2f}%")
         st.write(f"**Overall Avg Error %:** {overall_error:.2f}%")
 
-        # Prepare DataFrame for table
         df_results = pd.DataFrame({
             feature_x: X_test[feature_x].values,
             feature_y: X_test[feature_y].values,
-            f"Actual_{selected_target}": y_actual,
             f"Predicted_{selected_target}": y_pred_test[:, output_index]
         })
+
+        if np.any(y_actual):
+            df_results[f"Actual_{selected_target}"] = y_actual
 
         st.dataframe(df_results.head(15))
 
 else:
     st.warning("⚠️ Please select two distinct features (X and Y) to visualize the RSM plot.")
-
-
-
-
 #!/usr/bin/env python
 # coding: utf-8
 
