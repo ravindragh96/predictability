@@ -1,3 +1,222 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+import os
+import numpy as np
+import pandas as pd
+import streamlit as st
+import plotly.graph_objects as go
+import tensorflow as tf
+import joblib
+from sklearn.metrics import mean_absolute_percentage_error
+
+# -----------------------
+# 1️⃣  SETUP & LOAD FILES
+# -----------------------
+st.set_page_config(page_title="RSM Interactive Plotly App", layout="wide")
+st.title("🎛️ Response Surface Modeling (RSM) — Test Data Visualization")
+
+BASE_DIR = r"C:\Users\gantrav01\RD_predictability_11925"
+
+# Paths
+TRAIN_X_PATH = os.path.join(BASE_DIR, "H_vs_Tau_training.xlsx")     # for feature headers only
+TRAIN_Y_PATH = os.path.join(BASE_DIR, "H_vs_Tau_target.xlsx")       # for target names
+TEST_PATH    = os.path.join(BASE_DIR, "Copy of T33_100_Samples_for_testing.xlsx")
+MODEL_PATH   = os.path.join(BASE_DIR, "checkpoints", "h_vs_tau_best_model.keras")
+X_SCALER_PATH = os.path.join(BASE_DIR, "x_eta_scaler.pkl")
+Y_SCALER_PATH = os.path.join(BASE_DIR, "y_eta_scaler.pkl")
+
+# Load
+X_train = pd.read_excel(TRAIN_X_PATH)
+y_train = pd.read_excel(TRAIN_Y_PATH)
+t33_df = pd.read_excel(TEST_PATH)
+
+# Clean column names
+def clean_cols(df):
+    df = df.copy()
+    df.columns = df.columns.str.strip().str.replace('[^A-Za-z0-9]+', ' ', regex=True)
+    return df
+
+X_train = clean_cols(X_train)
+y_train = clean_cols(y_train)
+t33_df = clean_cols(t33_df)
+
+# Extract only shared features
+feature_cols = [c for c in X_train.columns if c in t33_df.columns]
+X_test = t33_df[feature_cols]
+
+# Extract actual targets if available
+target_cols = [c for c in y_train.columns if c in t33_df.columns]
+y_actual_df = t33_df[target_cols] if target_cols else pd.DataFrame()
+
+# Load model and scalers
+model = tf.keras.models.load_model(MODEL_PATH)
+x_scaler = joblib.load(X_SCALER_PATH)
+y_scaler = joblib.load(Y_SCALER_PATH)
+
+# -----------------------
+# 2️⃣  SIDEBAR CONTROLS
+# -----------------------
+st.sidebar.header("⚙️ Controls")
+feature_x = st.sidebar.selectbox("Select Feature X", [""] + feature_cols)
+feature_y = st.sidebar.selectbox("Select Feature Y", [""] + feature_cols)
+target_option = st.sidebar.selectbox("Select Target Output", [""] + list(y_train.columns))
+show_3d = st.sidebar.checkbox("Show 3D Surface", value=False)
+
+if "h1" in X_test.columns:
+    h1_value = st.sidebar.number_input("Constant h1 value", value=float(X_test["h1"].mean()))
+else:
+    h1_value = None
+
+# -----------------------
+# 3️⃣  VALIDATE INPUTS
+# -----------------------
+if not feature_x or not feature_y or feature_x == feature_y:
+    st.warning("Please select two distinct features for visualization.")
+    st.stop()
+
+if not target_option:
+    st.warning("Please select a target output.")
+    st.stop()
+
+# -----------------------
+# 4️⃣  PREPARE GRID DATA
+# -----------------------
+f1, f2 = feature_x, feature_y
+f1_range = np.linspace(X_test[f1].min(), X_test[f1].max(), 40)
+f2_range = np.linspace(X_test[f2].min(), X_test[f2].max(), 40)
+xx, yy = np.meshgrid(f1_range, f2_range)
+
+grid = pd.DataFrame({f1: xx.ravel(), f2: yy.ravel()})
+for col in X_test.columns:
+    if col not in [f1, f2]:
+        grid[col] = X_test[col].mean()
+
+if h1_value is not None and "h1" in X_test.columns:
+    grid["h1"] = h1_value
+
+# Align feature order with scaler
+scaler_features = list(x_scaler.feature_names_in_)
+grid = grid.reindex(columns=scaler_features, fill_value=X_test.mean().iloc[0])
+X_test = X_test.reindex(columns=scaler_features, fill_value=X_test.mean().iloc[0])
+
+# -----------------------
+# 5️⃣  SCALE, PREDICT, INVERSE SCALE
+# -----------------------
+X_test_scaled = x_scaler.transform(X_test)
+grid_scaled = x_scaler.transform(grid)
+
+y_pred_scaled = model.predict(X_test_scaled)
+y_pred_grid_scaled = model.predict(grid_scaled)
+
+y_pred = y_scaler.inverse_transform(y_pred_scaled)
+y_pred_grid = y_scaler.inverse_transform(y_pred_grid_scaled)
+
+output_index = y_train.columns.get_loc(target_option)
+
+# Reshape for contour
+pred_surface = y_pred_grid[:, output_index].reshape(xx.shape)
+
+# -----------------------
+# 6️⃣  MAPE VERIFICATION
+# -----------------------
+if target_option in y_actual_df.columns:
+    y_actual = y_actual_df[target_option].values
+    mape_value = mean_absolute_percentage_error(y_actual, y_pred[:, output_index]) * 100
+    st.success(f"✅ Verified MAPE for {target_option}: {mape_value:.2f}% (Expected ≈ 3.33%)")
+else:
+    y_actual = np.zeros_like(y_pred[:, output_index])
+    st.warning(f"⚠️ No actual values for {target_option} found in test file — skipping MAPE check.")
+
+# -----------------------
+# 7️⃣  2D PLOTLY CONTOUR
+# -----------------------
+fig = go.Figure(data=go.Contour(
+    z=pred_surface,
+    x=f1_range,
+    y=f2_range,
+    colorscale="Viridis",
+    contours=dict(showlabels=True, labelfont=dict(size=12, color="white")),
+    colorbar=dict(title=f"{target_option} (Actual Scale)"),
+    hovertemplate=(
+        f"<b>{f1}</b>: %{{x:.3f}}<br>"
+        f"<b>{f2}</b>: %{{y:.3f}}<br>"
+        f"<b>Predicted {target_option}</b>: %{{z:.3f}}<extra></extra>"
+    ),
+))
+
+# Overlay actual test points
+if target_option in y_actual_df.columns:
+    fig.add_trace(go.Scatter(
+        x=X_test[f1],
+        y=X_test[f2],
+        mode='markers',
+        marker=dict(size=6, color='red', line=dict(width=1, color='black')),
+        name=f'Actual {target_option}',
+        text=[
+            f"{f1}: {X_test.at[i, f1]:.3f}<br>"
+            f"{f2}: {X_test.at[i, f2]:.3f}<br>"
+            f"Actual {target_option}: {y_actual_df[target_option].iloc[i]:.3f}"
+            for i in range(len(X_test))
+        ],
+        hoverinfo='text'
+    ))
+
+fig.update_layout(
+    title=f"Contour Plot — {f1} vs {f2} (Predicted {target_option})",
+    xaxis_title=f1,
+    yaxis_title=f2,
+    width=850,
+    height=700,
+    template="plotly_white",
+)
+
+st.plotly_chart(fig, use_container_width=True)
+
+# -----------------------
+# 8️⃣  OPTIONAL 3D SURFACE
+# -----------------------
+if show_3d:
+    st.subheader(f"🌐 3D Surface View — {f1} vs {f2} vs {target_option}")
+    fig3d = go.Figure(data=[go.Surface(
+        z=pred_surface,
+        x=f1_range,
+        y=f2_range,
+        colorscale="Viridis",
+        contours={"z": {"show": True, "usecolormap": True, "highlightcolor": "limegreen", "project_z": True}},
+        colorbar=dict(title=f"{target_option}")
+    )])
+    fig3d.update_layout(
+        title=f"3D Surface of Predicted {target_option} (H1={h1_value if h1_value else 'N/A'})",
+        scene=dict(
+            xaxis_title=f1,
+            yaxis_title=f2,
+            zaxis_title=f"Predicted {target_option}"
+        ),
+        width=900,
+        height=750
+    )
+    st.plotly_chart(fig3d, use_container_width=True)
+
+# -----------------------
+# 9️⃣  SAMPLE TABLE
+# -----------------------
+st.markdown(f"### 🔍 Sample Actual vs Predicted {target_option} (first 15 rows)")
+compare_df = pd.DataFrame({
+    f1: X_test[f1].values[:15],
+    f2: X_test[f2].values[:15],
+    f"Pred_{target_option}": y_pred[:15, output_index],
+})
+if np.any(y_actual):
+    compare_df[f"Actual_{target_option}"] = y_actual[:15]
+st.dataframe(compare_df)
+
+
+
+
+
+
+#================================above is recent ===================================================================
 ##!/usr/bin/env python
 # coding: utf-8
 
