@@ -38,8 +38,46 @@ y_actual_df = t33_df[target_columns] if target_columns else pd.DataFrame()
 X_test_np = X_test.values.astype(np.float32)
 
 # Load trained ANN model
+chk_path = r'checkpoints/h_vs_tau_best_model#!/usr/bin/env python
+# coding: utf-8
+
+import streamlit as st
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler
+import os
+import tensorflow as tf
+import joblib
+
+# -----------------------
+# Load Data and Model
+# -----------------------
+os.chdir(r'C:\Users\gantrav01\RD_predictability_11925')
+
+# Load training and test data
+X_train = pd.read_excel(r'H_vs_Tau_training.xlsx')
+y_train = pd.read_excel(r'H_vs_Tau_target.xlsx')
+t33_df = pd.read_excel(r'Copy of T33_100_Samples_for_testing.xlsx')
+
+# Clean column names
+X_train.columns = X_train.columns.str.strip().str.replace('[^A-Za-z0-9]+', ' ', regex=True)
+y_train.columns = y_train.columns.str.strip().str.replace('[^A-Za-z0-9]+', ' ', regex=True)
+t33_df.columns = t33_df.columns.str.strip().str.replace('[^A-Za-z0-9]+', ' ', regex=True)
+
+# Extract test features and actual targets (if available)
+X_test = t33_df[X_train.columns]
+target_columns = [col for col in y_train.columns if col in t33_df.columns]
+y_actual_df = t33_df[target_columns] if target_columns else pd.DataFrame()
+
+# Convert to numpy
+X_test_np = X_test.values.astype(np.float32)
+
+# Load model and scalers
 chk_path = r'checkpoints/h_vs_tau_best_model.keras'
 model = tf.keras.models.load_model(chk_path)
+x_scaler = joblib.load(r'x_eta_scaler.pkl')  # or correct scaler for Tau if saved separately
+y_scaler = joblib.load(r'y_eta_scaler.pkl')
 
 # -----------------------
 # Streamlit UI Setup
@@ -47,101 +85,111 @@ model = tf.keras.models.load_model(chk_path)
 st.set_page_config(page_title="RSM Visualization App", layout="wide")
 st.title("🎛️ Response Surface Modeling (RSM) Interactive App")
 
-# -----------------------
-# Sidebar controls
-# -----------------------
 st.sidebar.header("⚙️ RSM Controls")
 
 all_features = X_test.columns.tolist()
-feature_x = st.sidebar.selectbox("Select Feature X", all_features, index=0)
-feature_y = st.sidebar.selectbox("Select Feature Y", all_features, index=1)
 
-# If multiple targets exist, let the user choose one
+# No defaults selected now
+feature_x = st.sidebar.selectbox("Select Feature X", [""] + all_features, index=0)
+feature_y = st.sidebar.selectbox("Select Feature Y", [""] + all_features, index=0)
+
 if len(y_train.columns) > 1:
-    selected_target = st.sidebar.selectbox("Select Target to Visualize", y_train.columns.tolist(), index=0)
+    selected_target = st.sidebar.selectbox("Select Target", y_train.columns.tolist(), index=0)
 else:
     selected_target = y_train.columns[0]
 
-# Keep h1 constant (if applicable)
+# Constant h1 if applicable
 h1_value = 100
 st.sidebar.write(f"Constant h1 = {h1_value}")
 
-# -----------------------
-# Prepare grid for RSM
-# -----------------------
-x_range = np.linspace(X_test[feature_x].min(), X_test[feature_x].max(), 40)
-y_range = np.linspace(X_test[feature_y].min(), X_test[feature_y].max(), 40)
-xx, yy = np.meshgrid(x_range, y_range)
+# Only proceed if both features selected
+if feature_x and feature_y and feature_x != feature_y:
 
-# Create grid DataFrame
-grid = pd.DataFrame({feature_x: xx.ravel(), feature_y: yy.ravel()})
+    # -----------------------
+    # Prepare Grid for RSM
+    # -----------------------
+    x_range = np.linspace(X_test[feature_x].min(), X_test[feature_x].max(), 40)
+    y_range = np.linspace(X_test[feature_y].min(), X_test[feature_y].max(), 40)
+    xx, yy = np.meshgrid(x_range, y_range)
 
-# Keep all other features constant at their mean
-for col in X_test.columns:
-    if col not in [feature_x, feature_y]:
-        grid[col] = X_test[col].mean()
+    grid = pd.DataFrame({feature_x: xx.ravel(), feature_y: yy.ravel()})
 
-# Add constant h1 column if applicable
-if "h1" in X_test.columns:
-    grid["h1"] = h1_value
+    # Keep others constant at mean
+    for col in X_test.columns:
+        if col not in [feature_x, feature_y]:
+            grid[col] = X_test[col].mean()
 
-# -----------------------
-# Model Predictions on Grid
-# -----------------------
-y_pred_grid = model.predict(grid)
-y_pred_grid = np.array(y_pred_grid)
-output_index = y_train.columns.get_loc(selected_target)
-zz = y_pred_grid[:, output_index].reshape(xx.shape)
+    # Add constant h1 if available
+    if "h1" in X_test.columns:
+        grid["h1"] = h1_value
 
-# -----------------------
-# Layout: Two Panels
-# -----------------------
-col1, col2 = st.columns(2)
+    # Scale input features
+    grid_scaled = x_scaler.transform(grid)
 
-# ---- Left: 2D RSM Plot ----
-with col1:
-    st.subheader(f"📈 Response Surface Plot — Predicted {selected_target}")
-    fig, ax = plt.subplots(figsize=(6, 5))
-    contour = ax.contourf(xx, yy, zz, cmap="viridis")
-    cbar = plt.colorbar(contour)
-    cbar.set_label(f"Predicted {selected_target}")
-    ax.set_xlabel(feature_x)
-    ax.set_ylabel(feature_y)
-    ax.set_title(f"Response Surface of Predicted {selected_target}")
-    st.pyplot(fig)
+    # -----------------------
+    # Predictions
+    # -----------------------
+    y_pred_scaled = model.predict(grid_scaled)
+    y_pred = y_scaler.inverse_transform(y_pred_scaled)
 
-# ---- Right: Actual vs Predicted Table ----
-with col2:
-    st.subheader(f"📊 Actual vs Predicted {selected_target} (Test Data)")
+    output_index = y_train.columns.get_loc(selected_target)
+    z = y_pred[:, output_index].reshape(xx.shape)
 
-    # Predict on test data
-    y_pred_test = model.predict(X_test_np)
-    y_pred_test = np.array(y_pred_test)
+    # Scale bar range (actual prediction range)
+    vmin, vmax = z.min(), z.max()
 
-    if not y_actual_df.empty:
-        if selected_target in y_actual_df.columns:
-            df_results = pd.DataFrame({
-                f"Actual_{selected_target}": y_actual_df[selected_target].values,
-                f"Predicted_{selected_target}": y_pred_test[:, output_index]
-            })
+    # -----------------------
+    # Layout
+    # -----------------------
+    col1, col2 = st.columns(2)
+
+    # ---- Left: 2D RSM Plot ----
+    with col1:
+        st.subheader(f"📈 Response Surface — Predicted {selected_target}")
+        fig, ax = plt.subplots(figsize=(6, 5))
+        contour = ax.contourf(xx, yy, z, cmap="viridis", levels=20, vmin=vmin, vmax=vmax)
+        cbar = plt.colorbar(contour)
+        cbar.set_label(f"Predicted {selected_target} (actual scale)")
+        ax.set_xlabel(feature_x)
+        ax.set_ylabel(feature_y)
+        ax.set_title(f"Response Surface of {selected_target}")
+        st.pyplot(fig)
+
+    # ---- Right: Actual vs Predicted ----
+    with col2:
+        st.subheader(f"📊 Actual vs Predicted {selected_target} (Test Data)")
+
+        # Scale X_test and predict
+        X_test_scaled = x_scaler.transform(X_test)
+        y_pred_test_scaled = model.predict(X_test_scaled)
+        y_pred_test = y_scaler.inverse_transform(y_pred_test_scaled)
+
+        # Actual target
+        if not y_actual_df.empty and selected_target in y_actual_df.columns:
+            y_actual = y_actual_df[selected_target].values
         else:
-            df_results = pd.DataFrame({
-                f"Predicted_{selected_target}": y_pred_test[:, output_index]
-            })
-            st.warning(f"⚠️ Actual values for {selected_target} not found in test data.")
-    else:
+            y_actual = np.zeros_like(y_pred_test[:, output_index])
+
+        # Compute error metrics
+        eps = 1e-8
+        error_t1 = np.mean(np.abs((y_actual - y_pred_test[:, output_index]) / (y_actual + eps))) * 100 if np.any(y_actual) else np.nan
+        overall_error = np.mean(np.abs((y_scaler.inverse_transform(y_scaler.transform(y_train)) - y_pred_test) / (y_scaler.inverse_transform(y_scaler.transform(y_train)) + eps))) * 100
+
+        st.write(f"**T1 Error %:** {error_t1:.2f}%")
+        st.write(f"**Overall Avg Error %:** {overall_error:.2f}%")
+
+        # Prepare DataFrame for table
         df_results = pd.DataFrame({
+            feature_x: X_test[feature_x].values,
+            feature_y: X_test[feature_y].values,
+            f"Actual_{selected_target}": y_actual,
             f"Predicted_{selected_target}": y_pred_test[:, output_index]
         })
-        st.warning("⚠️ No actual target columns found in the test file.")
 
-    # Add chosen feature columns for context
-    df_results[feature_x] = X_test[feature_x].values
-    df_results[feature_y] = X_test[feature_y].values
+        st.dataframe(df_results.head(15))
 
-    st.dataframe(df_results[[feature_x, feature_y] + [col for col in df_results.columns if selected_target in col]].head(15))
-
-st.success("✅ RSM Visualization Complete")
+else:
+    st.warning("⚠️ Please select two distinct features (X and Y) to visualize the RSM plot.")
 
 
 
