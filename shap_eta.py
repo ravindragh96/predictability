@@ -26,19 +26,11 @@ X_SCALER_PATH = os.path.join(BASE_DIR, "x_eta_scaler.pkl")
 Y_SCALER_PATH = os.path.join(BASE_DIR, "y_eta_scaler.pkl")
 
 # -----------------------
-# 2️⃣ Load Data
+# 2️⃣ Load Data without cleaning columns
 # -----------------------
-def clean_cols(df):
-    df = df.copy()
-    # Replace non-alphanumeric with underscores
-    df.columns = df.columns.str.strip().str.replace('[^A-Za-z0-9]+', '_', regex=True)
-    # Remove trailing underscores
-    df.columns = df.columns.str.rstrip('_')
-    return df
-
-X_train = clean_cols(pd.read_excel(TRAIN_X_PATH))
-y_train = clean_cols(pd.read_excel(TRAIN_Y_PATH))
-t33_df = clean_cols(pd.read_excel(TEST_PATH))
+X_train = pd.read_excel(TRAIN_X_PATH)
+y_train = pd.read_excel(TRAIN_Y_PATH)
+t33_df = pd.read_excel(TEST_PATH)
 
 feature_cols = [c for c in X_train.columns if c in t33_df.columns]
 X_test = t33_df[feature_cols]
