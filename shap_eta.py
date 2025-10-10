@@ -3,14 +3,41 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
-
+import os
+import os
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+import shap
+import plotly.graph_objects as go
+import itertools
+import plotly.io as pio
 # -----------------------
 # Load your data and model
 # -----------------------
 # Replace with your paths
 # X_train, X_test, y_test, model = ...
 # Assume model is your trained ANN
+os.chdir(r'C:\Users\gantrav01\RD_predictability_11925')
 
+X_train = pd.read_excel(r'H_vs_Tau_training.xlsx')
+y_train = pd.read_excel(r'H_vs_Tau_target.xlsx')
+t33_df = pd.read_excel(r'Copy of T33_100_Samples_for_testing.xlsx')
+
+# Clean column names
+X_train.columns = X_train.columns.str.strip().str.replace('[^A-Za-z0-9]+', ' ', regex=True)
+t33_df.columns = t33_df.columns.str.strip().str.replace('[^A-Za-z0-9]+', ' ', regex=True)
+
+X_test = t33_df[X_train.columns]
+y_actual_df = t33_df[[col for col in t33_df.columns if col in y_train.columns]]  # extract actual targets if available
+
+# Convert to numpy
+X_train_np = X_train.values.astype(np.float32)
+X_test_np = X_test.values.astype(np.float32)
+
+# Load model
+chk_path = r'checkpoints/h_vs_tau_best_model.keras'
+model = tf.keras.models.load_model(chk_path)
 st.set_page_config(page_title="RSM Visualization App", layout="wide")
 
 st.title("🎛️ Response Surface Modeling (RSM) Interactive App")
