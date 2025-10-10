@@ -30,7 +30,8 @@ Y_SCALER_PATH = os.path.join(BASE_DIR, "y_eta_scaler.pkl")
 # -----------------------
 def clean_cols(df):
     df = df.copy()
-    df.columns = df.columns.str.strip().str.replace('[^A-Za-z0-9]+', ' ', regex=True)
+    # Replace non-alphanumeric characters with underscores
+    df.columns = df.columns.str.strip().str.replace('[^A-Za-z0-9]+', '_', regex=True)
     return df
 
 X_train = clean_cols(pd.read_excel(TRAIN_X_PATH))
@@ -70,12 +71,18 @@ except Exception as e:
 # -----------------------
 st.sidebar.header("⚙️ Select RSM Inputs")
 
-feature_x = st.sidebar.selectbox("Select Feature X (horizontal axis)", [""] + feature_cols)
-feature_y = st.sidebar.selectbox("Select Feature Y (vertical axis)", [""] + feature_cols)
-target_option = st.sidebar.selectbox("Select Target Output", [""] + list(y_train.columns))
+# Use cleaned feature_cols directly, no empty string option
+feature_x = st.sidebar.selectbox("Select Feature X (horizontal axis)", feature_cols, index=0)
+feature_y = st.sidebar.selectbox("Select Feature Y (vertical axis)", feature_cols, index=1)
+target_option = st.sidebar.selectbox("Select Target Output", list(y_train.columns))
 
-if not feature_x or not feature_y or feature_x == feature_y:
+# Validation for distinct features and existence in X_test columns
+if feature_x == feature_y:
     st.warning("Please select two **distinct** features for X and Y.")
+    st.stop()
+
+if feature_x not in X_test.columns or feature_y not in X_test.columns:
+    st.warning("Selected features must exist in the test data columns.")
     st.stop()
 
 if not target_option:
@@ -94,7 +101,7 @@ if hasattr(x_scaler, "feature_names_in_"):
 else:
     all_features = list(X_train.columns)
 
-# Align & fill missing columns
+# Align & fill missing columns in X_test
 X_mean = X_test.mean(numeric_only=True)
 for col in all_features:
     if col not in X_test.columns:
