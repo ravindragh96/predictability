@@ -1,30 +1,109 @@
-ValueError: Invalid property specified for object of type plotly.graph_objs.contour.ColorBar: 'titleside' Did you mean "title"? Valid properties: bgcolor Sets the color of padded area. bordercolor Sets the axis line color. borderwidth Sets the width (in px) or the border enclosing this color bar. dtick Sets the step in-between ticks on this axis. Use with `tick0`. Must be a positive number, or special strings available to "log" and "date" axes. If the axis `type` is "log", then ticks are set every 10^(n*dtick) where n is the tick number. For example, to set a tick mark at 1, 10, 100, 1000, ... set dtick to 1. To set tick marks at 1, 100, 10000, ... set dtick to 2. To set tick marks at 1, 5, 25, 125, 625, 3125, ... set dtick to log_10(5), or 0.69897000433. "log" has several special values; "L<f>", where `f` is a positive number, gives ticks linearly spaced in value (but not position). For example `tick0` = 0.1, `dtick` = "L0.5" will put ticks at 0.1, 0.6, 1.1, 1.6 etc. To show powers of 10 plus small digits between, use "D1" (all digits) or "D2" (only 2 and 5). `tick0` is ignored for "D1" and "D2". If the axis `type` is "date", then you must convert the time to milliseconds. For example, to set the interval between ticks to one day, set `dtick` to 86400000.0. "date" also has special values "M<n>" gives ticks spaced by a number of months. `n` must be a positive integer. To set ticks on the 15th of every third month, set `tick0` to "2000-01-15" and `dtick` to "M3". To set ticks every 4 years, set `dtick` to "M48" exponentformat Determines a formatting rule for the tick exponents. For example, consider the number 1,000,000,000. If "none", it appears as 1,000,000,000. If "e", 1e+9. If "E", 1E+9. If "power", 1x10^9 (with 9 in a super script). If "SI", 1G. If "B", 1B. labelalias Replacement text for specific tick or hover labels. For example using {US: 'USA', CA: 'Canada'} changes US to USA and CA to Canada. The labels we would have shown must match the keys exactly, after adding any tickprefix or ticksuffix. For negative numbers the minus sign symbol used (U+2212) is wider than the regular ascii dash. That means you need to use −1 instead of -1. labelalias can be used with any axis type, and both keys (if needed) and values (if desired) can include html-like tags or MathJax. len Sets the length of the color bar This measure excludes the padding of both ends. That is, the color bar length is this length minus the padding on both ends. lenmode Determines whether this color bar's length (i.e. the measure in the color variation direction) is set in units of plot "fraction" or in *pixels. Use `len` to set the value. minexponent Hide SI prefix for 10^n if |n| is below this number. This only has an effect when `tickformat` is "SI" or "B". nticks Specifies the maximum number of ticks for the particular axis. The actual number of ticks will be chosen automatically to be less than or equal to `nticks`. Has an effect only if `tickmode` is set to "auto". orientation Sets the orientation of the colorbar. outlinecolor Sets the axis line color. outlinewidth Sets the width (in px) of the axis line. separatethousands If "true", even 4-digit integers are separated showexponent If "all", all exponents are shown besides their significands. If "first", only the exponent of the first tick is shown. If "last", only the exponent of the last tick is shown. If "none", no exponents appear. showticklabels Determines whether or not the tick labels are drawn. showtickprefix If "all", all tick labels are displayed with a prefix. If "first", only the first tick is displayed with a prefix. If "last", only the last tick is displayed with a suffix. If "none", tick prefixes are hidden. showticksuffix Same as `showtickprefix` but for tick suffixes. thickness Sets the thickness of the color bar This measure excludes the size of the padding, ticks and labels. thicknessmode Determines whether this color bar's thickness (i.e. the measure in the constant color direction) is set in units of plot "fraction" or in "pixels". Use `thickness` to set the value. tick0 Sets the placement of the first tick on this axis. Use with `dtick`. If the axis `type` is "log", then you must take the log of your starting tick (e.g. to set the starting tick to 100, set the `tick0` to 2) except when `dtick`=*L<f>* (see `dtick` for more info). If the axis `type` is "date", it should be a date string, like date data. If the axis `type` is "category", it should be a number, using the scale where each category is assigned a serial number from zero in the order it appears. tickangle Sets the angle of the tick labels with respect to the horizontal. For example, a `tickangle` of -90 draws the tick labels vertically. tickcolor Sets the tick color. tickfont Sets the color bar's tick label font tickformat Sets the tick label formatting rule using d3 formatting mini-languages which are very similar to those in Python. For numbers, see: https://github.com/d3/d3-format/tree/v1.4.5#d3-format. And for dates see: https://github.com/d3/d3-time- format/tree/v2.2.3#locale_format. We add two items to d3's date formatter: "%h" for half of the year as a decimal number as well as "%{n}f" for fractional seconds with n digits. For example, *2016-10-13 09:15:23.456* with tickformat "%H~%M~%S.%2f" would display "09~15~23.46" tickformatstops A tuple of :class:`plotly.graph_objects.contour.colorba r.Tickformatstop` instances or dicts with compatible properties tickformatstopdefaults When used in a template (as layout.template.data.contou r.colorbar.tickformatstopdefaults), sets the default property values to use for elements of contour.colorbar.tickformatstops ticklabeloverflow Determines how we handle tick labels that would overflow either the graph div or the domain of the axis. The default value for inside tick labels is *hide past domain*. In other cases the default is *hide past div*. ticklabelposition Determines where tick labels are drawn relative to the ticks. Left and right options are used when `orientation` is "h", top and bottom when `orientation` is "v". ticklabelstep Sets the spacing between tick labels as compared to the spacing between ticks. A value of 1 (default) means each tick gets a label. A value of 2 means shows every 2nd label. A larger value n means only every nth tick is labeled. `tick0` determines which labels are shown. Not implemented for axes with `type` "log" or "multicategory", or when `tickmode` is "array". ticklen Sets the tick length (in px). tickmode Sets the tick mode for this axis. If "auto", the number of ticks is set via `nticks`. If "linear", the placement of the ticks is determined by a starting position `tick0` and a tick step `dtick` ("linear" is the default value if `tick0` and `dtick` are provided). If "array", the placement of the ticks is set via `tickvals` and the tick text is `ticktext`. ("array" is the default value if `tickvals` is provided). tickprefix Sets a tick label prefix. ticks Determines whether ticks are drawn or not. If "", this axis' ticks are not drawn. If "outside" ("inside"), this axis' are drawn outside (inside) the axis lines. ticksuffix Sets a tick label suffix. ticktext Sets the text displayed at the ticks position via `tickvals`. Only has an effect if `tickmode` is set to "array". Used with `tickvals`. ticktextsrc Sets the source reference on Chart Studio Cloud for `ticktext`. tickvals Sets the values at which ticks on this axis appear. Only has an effect if `tickmode` is set to "array". Used with `ticktext`. tickvalssrc Sets the source reference on Chart Studio Cloud for `tickvals`. tickwidth Sets the tick width (in px). title :class:`plotly.graph_objects.contour.colorbar.Title` instance or dict with compatible properties x Sets the x position with respect to `xref` of the color bar (in plot fraction). When `xref` is "paper", defaults to 1.02 when `orientation` is "v" and 0.5 when `orientation` is "h". When `xref` is "container", defaults to 1 when `orientation` is "v" and 0.5 when `orientation` is "h". Must be between 0 and 1 if `xref` is "container" and between "-2" and 3 if `xref` is "paper". xanchor Sets this color bar's horizontal position anchor. This anchor binds the `x` position to the "left", "center" or "right" of the color bar. Defaults to "left" when `orientation` is "v" and "center" when `orientation` is "h". xpad Sets the amount of padding (in px) along the x direction. xref Sets the container `x` refers to. "container" spans the entire `width` of the plot. "paper" refers to the width of the plotting area only. y Sets the y position with respect to `yref` of the color bar (in plot fraction). When `yref` is "paper", defaults to 0.5 when `orientation` is "v" and 1.02 when `orientation` is "h". When `yref` is "container", defaults to 0.5 when `orientation` is "v" and 1 when `orientation` is "h". Must be between 0 and 1 if `yref` is "container" and between "-2" and 3 if `yref` is "paper". yanchor Sets this color bar's vertical position anchor This anchor binds the `y` position to the "top", "middle" or "bottom" of the color bar. Defaults to "middle" when `orientation` is "v" and "bottom" when `orientation` is "h". ypad Sets the amount of padding (in px) along the y direction. yref Sets the container `y` refers to. "container" spans the entire `height` of the plot. "paper" refers to the height of the plotting area only. Did you mean "title"? Bad property path: titleside ^^^^^^^^^
-Traceback:
-File "C:\Users\gantrav01\RD_predictability_11925\rsm_tau_fin.py", line 155, in <module>
-    fig = go.Figure(data=go.Contour(
-                         ^^^^^^^^^^^
-File "C:\Users\gantrav01\AppData\Local\anaconda3\Lib\site-packages\plotly\graph_objs\_contour.py", line 2544, in __init__
-    self._set_property("colorbar", arg, colorbar)
-File "C:\Users\gantrav01\AppData\Local\anaconda3\Lib\site-packages\plotly\basedatatypes.py", line 4403, in _set_property
-    _set_property_provided_value(self, name, arg, provided)
-File "C:\Users\gantrav01\AppData\Local\anaconda3\Lib\site-packages\plotly\basedatatypes.py", line 398, in _set_property_provided_value
-    obj[name] = val
-    ~~~^^^^^^
-File "C:\Users\gantrav01\AppData\Local\anaconda3\Lib\site-packages\plotly\basedatatypes.py", line 4924, in __setitem__
-    self._set_compound_prop(prop, value)
-File "C:\Users\gantrav01\AppData\Local\anaconda3\Lib\site-packages\plotly\basedatatypes.py", line 5335, in _set_compound_prop
-    val = validator.validate_coerce(val, skip_invalid=self._skip_invalid)
-          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-File "C:\Users\gantrav01\AppData\Local\anaconda3\Lib\site-packages\_plotly_utils\basevalidators.py", line 2425, in validate_coerce
-    v = self.data_class(v, skip_invalid=skip_invalid, _validate=_validate)
-        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-File "C:\Users\gantrav01\AppData\Local\anaconda3\Lib\site-packages\plotly\graph_objs\contour\_colorbar.py", line 1721, in __init__
-    self._process_kwargs(**dict(arg, **kwargs))
-File "C:\Users\gantrav01\AppData\Local\anaconda3\Lib\site-packages\plotly\basedatatypes.py", line 4451, in _process_kwargs
-    raise err
+# -----------------------
+# 8️⃣ Split Layout: Contour (Left) + Error Charts (Right)
+# -----------------------
+col1, col2 = st.columns([2, 1])
 
-#!/usr/bin/env python
-# coding: utf-8
+# ---- Left Column: Contour Plot ----
+with col1:
+    st.subheader(f"📈 RSM Contour: {f1} vs {f2}")
+    fig = go.Figure(data=go.Contour(
+        z=preds,
+        x=f1_range,
+        y=f2_range,
+        colorscale="Viridis",
+        colorbar=dict(
+            title=dict(
+                text=f"{output_to_plot} (Actual Scale)",
+                side="right"
+            )
+        ),
+        contours=dict(showlabels=True, labelfont=dict(size=12, color="white")),
+        hovertemplate=(
+            f"<b>{f1}</b>: %{{x:.3f}}<br>"
+            f"<b>{f2}</b>: %{{y:.3f}}<br>"
+            f"<b>Predicted {output_to_plot}</b>: %{{z:.3f}}<extra></extra>"
+        ),
+    ))
+
+    # Overlay actual test points
+    if output_to_plot in y_actual_df.columns:
+        fig.add_trace(go.Scatter(
+            x=X_test[f1],
+            y=X_test[f2],
+            mode="markers",
+            marker=dict(size=6, color="red", line=dict(width=1, color="black")),
+            name=f"Actual {output_to_plot}"
+        ))
+
+    fig.update_layout(
+        title=f"{output_to_plot} Contour (H1 fixed at 100)",
+        xaxis_title=f1,
+        yaxis_title=f2,
+        width=800,
+        height=600,
+        template="plotly_white",
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+# ---- Right Column: Circular Error Charts ----
+with col2:
+    st.subheader("📊 Error Performance")
+
+    if output_to_plot in y_actual_df.columns:
+        eps = 1e-8
+        abs_errors = np.abs(y_actual - y_pred[:, output_index])
+        percent_errors = abs_errors / (y_actual + eps) * 100
+        avg_error = np.mean(percent_errors)
+        max_error = np.max(percent_errors)
+        min_error = np.min(percent_errors)
+
+        # ---- Pie Chart: MAPE ----
+        fig_mape = go.Figure(data=[
+            go.Pie(
+                labels=['MAPE (%)', 'Remaining Accuracy (%)'],
+                values=[mape_val, 100 - mape_val],
+                hole=0.6,
+                marker_colors=['#EF553B', '#00CC96'],
+                textinfo='label+percent'
+            )
+        ])
+        fig_mape.update_layout(
+            title=dict(text=f"MAPE Breakdown: {mape_val:.2f}%", x=0.5),
+            showlegend=False,
+            height=300
+        )
+
+        # ---- Pie Chart: Average Error ----
+        fig_avg = go.Figure(data=[
+            go.Pie(
+                labels=['Avg Error (%)', 'Remaining Accuracy (%)'],
+                values=[avg_error, 100 - avg_error],
+                hole=0.6,
+                marker_colors=['#636EFA', '#AB63FA'],
+                textinfo='label+percent'
+            )
+        ])
+        fig_avg.update_layout(
+            title=dict(text=f"Average Error: {avg_error:.2f}%", x=0.5),
+            showlegend=False,
+            height=300
+        )
+
+        st.plotly_chart(fig_mape, use_container_width=True)
+        st.plotly_chart(fig_avg, use_container_width=True)
+
+        # Additional numeric summary
+        st.markdown("---")
+        st.markdown(f"**Max % Error:** `{max_error:.2f}%`")
+        st.markdown(f"**Min % Error:** `{min_error:.2f}%`")
+        st.markdown("✅ Model predictions are in expected range.")
+    else:
+        st.warning("⚠️ No actual values available to compute error metrics.")
+c1, c2 = st.columns(2)
+with c1: st.plotly_chart(fig_mape, use_container_width=True)
+with c2: st.plotly_chart(fig_avg, use_container_width=True)
+
 
 import os
 import numpy as np
