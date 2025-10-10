@@ -616,3 +616,286 @@ feat_imp_df.to_excel("SHAP_Feature_Importance_ANN_eta.xlsx", index=False)
 joblib.dump(selected_features, "selected_features_eta.pkl")
 
 print("\n✅ SHAP feature importance completed and saved successfully!")
+
+
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[1]:
+
+
+import os
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+import shap
+import plotly.graph_objects as go
+import itertools
+import joblib  # for loading scaler
+import plotly.io as pio
+
+# -------------------------------
+# Plotly inline display
+# -------------------------------
+pio.renderers.default = 'notebook_connected'
+
+
+# In[2]:
+
+
+# -------------------------------
+# 1. Load data, model, scaler
+# -------------------------------
+os.chdir(r'C:\Users\gantrav01\RD_predictability_11925')
+
+X_train = pd.read_excel(r'H_vs_Tau_training.xlsx')
+y_train = pd.read_excel(r'H_vs_Tau_target.xlsx')
+t33_df = pd.read_excel(r'Copy of T33_100_Samples_for_testing.xlsx')
+
+
+# In[3]:
+
+
+# Clean column names
+X_train.columns = X_train.columns.str.strip().str.replace('[^A-Za-z0-9]+',' ',regex=True)
+t33_df.columns = t33_df.columns.str.strip().str.replace('[^A-Za-z0-9]+',' ',regex=True)
+
+X_test = t33_df[X_train.columns]
+y_actual_df = t33_df[[col for col in t33_df.columns if col in y_train.columns]]
+
+# Convert to numpy
+X_train_np = X_train.values.astype(np.float32)
+X_test_np = X_test.values.astype(np.float32)
+
+
+# In[4]:
+
+
+# Load scaler
+scaler = joblib.load("x_scaler.pkl")  # Replace with your scaler file path
+
+
+# In[5]:
+
+
+# Scale training & test data
+X_train_scaled = scaler.transform(X_train_np)
+X_test_scaled = scaler.transform(X_test_np)
+
+
+# In[6]:
+
+
+# Load model
+model = tf.keras.models.load_model(r'checkpoints/h_vs_tau_best_model.keras')
+
+
+# In[7]:
+
+
+# -------------------------------
+# 2. Compute SHAP values
+# -------------------------------
+background = X_train_scaled[np.random.choice(len(X_train_scaled), min(500, len(X_train_scaled)), replace=False)]
+explainer = shap.DeepExplainer(model, background)
+shap_values = explainer.shap_values(X_test_scaled)
+
+shap_val_arr = np.array(shap_values)  # (outputs, samples, features)
+mean_abs_per_output = np.mean(np.abs(shap_val_arr), axis=0)
+mean_abs_over_outputs = np.mean(mean_abs_per_output, axis=1)
+
+all_features = list(X_train.columns)
+
+
+# In[12]:
+
+
+# -------------------------------
+# Exclude H3-H12 from SHAP ranking
+# -------------------------------
+h_drop = [f'h{i}' for i in range(3,13)]
+exclude_features = h_drop + ['IdentRev ']
+use_features = [f for f in all_features if f not in exclude_features]
+use_idx = [all_features.index(f) for f in use_features]
+
+feature_importance_filtered = pd.Series(mean_abs_over_outputs[use_idx], index=use_features)
+importance_ranked = feature_importance_filtered.sort_values(ascending=False)
+
+top10 = importance_ranked.index[:10].tolist()
+# print("\nTop 10 SHAP Features (excluding H3-H12):\n", top10)
+top10
+
+
+# In[9]:
+
+
+# -------------------------------
+# 3. Prepare folders
+# -------------------------------
+output_to_plot = 't1'
+output_index = list(y_train.columns).index(output_to_plot)
+constant_H1 = 100
+
+contour_dir = "RSM_Contour_Plots_Tau_final"
+scatter_dir = "RSM_Scatter_Plots_Tau_final"
+os.makedirs(contour_dir, exist_ok=True)
+os.makedirs(scatter_dir, exist_ok=True)
+
+X_mean = X_test.mean()
+
+def clamp_preds(preds):
+    return np.clip(preds, 0, 1)
+
+pairs = list(itertools.combinations(top10, 2))
+
+
+# In[10]:
+
+
+# -------------------------------
+# 4. Contour plots
+# -------------------------------
+for f1,f2 in pairs:
+    print(f"Generating contour for {f1} vs {f2}")
+
+    f1_range = np.linspace(X_test[f1].min(), X_test[f1].max(), 60)
+    f2_range = np.linspace(X_test[f2].min(), X_test[f2].max(), 60)
+    F1,F2 = np.meshgrid(f1_range,f2_range)
+
+    grid = pd.DataFrame({f1:F1.ravel(), f2:F2.ravel()})
+    for colname in all_features:
+        if colname not in [f1,f2]:
+            grid[colname] = constant_H1 if colname=='H1' else X_mean[colname]
+    grid = grid[all_features]
+
+    # Scale the grid
+    grid_scaled = scaler.transform(grid.values.astype(np.float32))
+
+    preds = model.predict(grid_scaled, verbose=0)[:, output_index]
+    preds = clamp_preds(preds).reshape(F1.shape)
+
+    # Contour plot
+    fig = go.Figure(data=go.Contour(
+        z=preds,
+        x=f1_range,
+        y=f2_range,
+        colorscale='Viridis',
+        colorbar=dict(title=f'{output_to_plot} (0–1)', tickvals=[0,0.25,0.5,0.75,1.0]),
+        contours=dict(showlabels=True),
+        hovertemplate=f"<b>{f1}</b>: %{{x:.3f}}<br><b>{f2}</b>: %{{y:.3f}}<br><b>Predicted {output_to_plot}</b>: %{{z:.3f}}<extra></extra>"
+    ))
+
+    # Overlay actual points
+    fig = go.Figure(data=go.Contour(
+        z=preds,
+        x=f1_range,
+        y=f2_range,
+        colorscale='Viridis',
+        contours=dict(showlabels=True),
+        hovertemplate=(
+            f"{f1}: %{{x:.3f}}<br>"
+            f"{f2}: %{{y:.3f}}<br>"
+            f"{output_to_plot} Prediction: %{{z:.3f}}<extra></extra>"
+        )
+    ))
+    fig.update_layout(
+        title=f"RSM Contour: {f1} vs {f2} (H1 fixed at {constant_H1}) - Output: {output_to_plot}",
+        xaxis_title=f1,
+        yaxis_title=f2,
+        width=700,
+        height=600
+    )
+
+    html_path = os.path.join(contour_dir, f"{f1}_vs_{f2}.html")
+    # png_path  = os.path.join(contour_dir, f"Contour_{f1}_vs_{f2}.png")
+    fig.write_html(html_path)
+    # fig.write_image(png_path, width=900, height=700)
+    fig.show()
+    # print(f"Saved contour: {html_path} and {png_path}")
+
+
+# In[11]:
+
+
+# -------------------------------
+# 5. Scatter plots
+# -------------------------------
+y_pred = model.predict(X_test_scaled, verbose=0)[:, output_index]
+y_pred = clamp_preds(y_pred)
+
+y_actual = y_actual_df[output_to_plot].values
+
+for f1,f2 in pairs:
+    hover_texts = [
+        f"<b>Index:</b>{i}<br>"
+        f"<b>{f1}:</b>{X_test.at[i,f1]:.3f}<br>"
+        f"<b>{f2}:</b>{X_test.at[i,f2]:.3f}<br>"
+        f"<b>Actual {output_to_plot}:</b>{y_actual[i]:.3f}<br>"
+        f"<b>Predicted {output_to_plot}:</b>{y_pred[i]:.3f}"
+        for i in range(len(X_test))
+    ]
+
+    scatter_fig = go.Figure()
+
+    # Actual points (blue)
+    scatter_fig.add_trace(go.Scatter(
+        x=X_test[f1],
+        y=X_test[f2],
+        mode='markers',
+        marker=dict(size=7,color='blue',opacity=0.6),
+        name='Actual T1',
+        text=hover_texts,
+        hoverinfo='text'
+    ))
+
+    # Predicted points (red)
+    scatter_fig.add_trace(go.Scatter(
+        x=X_test[f1],
+        y=X_test[f2],
+        mode='markers',
+        marker=dict(size=7,color='red',opacity=0.6),
+        name='Predicted T1',
+        text=hover_texts,
+        hoverinfo='text'
+    ))
+
+    scatter_fig.update_layout(
+        title=f"Scatter Plot (Actual vs Predicted {output_to_plot}): {f1} vs {f2}",
+        xaxis_title=f1,
+        yaxis_title=f2,
+        width=850,
+        height=700,
+        legend=dict(x=0.02,y=0.98,bgcolor='rgba(255,255,255,0.8)')
+    )
+
+    html_path = os.path.join(scatter_dir, f"{f1}_vs_{f2}.html")
+    # png_path  = os.path.join(scatter_dir, f"Scatter_{f1}_vs_{f2}.png")
+    scatter_fig.write_html(html_path)
+    # scatter_fig.write_image(png_path, width=850, height=700)
+    scatter_fig.show()
+    # print(f"Saved scatter: {html_path} and {png_path}")
+
+print("\n🎯 All plots generated and saved (HTML + PNG) with proper scaling and hover info!")
+
+
+# In[13]:
+
+
+#save the exccle summary 
+y_actual_df = t33_df[['t1']]
+
+y_actual = y_actual_df['t1'].values
+
+excel_df = X_test[top10].copy()
+excel_df['Actual_t1'] = y_actual
+excel_df['Predicted_t1'] = y_pred
+
+excel_df.to_excel('Top 10 Features with Actual vs Pred t1.xlsx', index = True)
+
+
+# In[ ]:
+
+
+
+
+
