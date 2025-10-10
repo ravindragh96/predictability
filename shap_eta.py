@@ -1,14 +1,3 @@
-KeyError: 'Angle_Metal_BA_I_'
-Traceback:
-File "C:\Users\gantrav01\RD_predictability_11925\rsm_tau_fin.py", line 135, in <module>
-    f2_range = np.linspace(X_test[f2].min(), X_test[f2].max(), 60)
-                           ~~~~~~^^^^
-File "C:\Users\gantrav01\AppData\Local\anaconda3\Lib\site-packages\pandas\core\frame.py", line 4107, in __getitem__
-    indexer = self.columns.get_loc(key)
-              ^^^^^^^^^^^^^^^^^^^^^^^^^
-File "C:\Users\gantrav01\AppData\Local\anaconda3\Lib\site-packages\pandas\core\indexes\base.py", line 3819, in get_loc
-    raise KeyError(key) from err
-
 #!/usr/bin/env python
 # coding: utf-8
 
@@ -41,8 +30,10 @@ Y_SCALER_PATH = os.path.join(BASE_DIR, "y_eta_scaler.pkl")
 # -----------------------
 def clean_cols(df):
     df = df.copy()
-    # Replace non-alphanumeric characters with underscores
+    # Replace non-alphanumeric with underscores
     df.columns = df.columns.str.strip().str.replace('[^A-Za-z0-9]+', '_', regex=True)
+    # Remove trailing underscores
+    df.columns = df.columns.str.rstrip('_')
     return df
 
 X_train = clean_cols(pd.read_excel(TRAIN_X_PATH))
@@ -82,18 +73,12 @@ except Exception as e:
 # -----------------------
 st.sidebar.header("⚙️ Select RSM Inputs")
 
-# Use cleaned feature_cols directly, no empty string option
 feature_x = st.sidebar.selectbox("Select Feature X (horizontal axis)", feature_cols, index=0)
 feature_y = st.sidebar.selectbox("Select Feature Y (vertical axis)", feature_cols, index=1)
 target_option = st.sidebar.selectbox("Select Target Output", list(y_train.columns))
 
-# Validation for distinct features and existence in X_test columns
 if feature_x == feature_y:
     st.warning("Please select two **distinct** features for X and Y.")
-    st.stop()
-
-if feature_x not in X_test.columns or feature_y not in X_test.columns:
-    st.warning("Selected features must exist in the test data columns.")
     st.stop()
 
 if not target_option:
@@ -106,7 +91,6 @@ if not target_option:
 output_to_plot = target_option
 output_index = y_train.columns.get_loc(output_to_plot)
 
-# All features (same order as scaler)
 if hasattr(x_scaler, "feature_names_in_"):
     all_features = list(x_scaler.feature_names_in_)
 else:
@@ -120,7 +104,19 @@ for col in all_features:
 
 X_test = X_test.reindex(columns=all_features, fill_value=0.0)
 
-# Scale test data
+# -----------------------
+# Validate selected features exist in columns
+# -----------------------
+f1, f2 = feature_x, feature_y
+
+if f1 not in X_test.columns or f2 not in X_test.columns:
+    st.error(f"Selected features '{f1}' or '{f2}' not found in test data columns.")
+    st.write("Columns available:", list(X_test.columns))
+    st.stop()
+
+# -----------------------
+# Scale test data and predict
+# -----------------------
 X_test_scaled = x_scaler.transform(X_test.astype(np.float32))
 y_pred_scaled = model.predict(X_test_scaled, verbose=0)
 y_pred = y_scaler.inverse_transform(y_pred_scaled)
@@ -140,8 +136,6 @@ else:
 # -----------------------
 # 7️⃣ Build Contour Grid (safe)
 # -----------------------
-f1, f2 = feature_x, feature_y
-
 f1_range = np.linspace(X_test[f1].min(), X_test[f1].max(), 60)
 f2_range = np.linspace(X_test[f2].min(), X_test[f2].max(), 60)
 F1, F2 = np.meshgrid(f1_range, f2_range)
