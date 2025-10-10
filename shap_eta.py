@@ -5,175 +5,283 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from sklearn.preprocessing import StandardScaler
+import joblib
 import os
 import tensorflow as tf
-import joblib
 
 # -----------------------
-# Load Data and Model
+# Config / Paths
 # -----------------------
-os.chdir(r'C:\Users\gantrav01\RD_predictability_11925')
-
-# Load training and test data
-X_train = pd.read_excel(r'H_vs_Tau_training.xlsx')
-y_train = pd.read_excel(r'H_vs_Tau_target.xlsx')
-t33_df = pd.read_excel(r'Copy of T33_100_Samples_for_testing.xlsx')
-
-# Clean column names
-X_train.columns = X_train.columns.str.strip().str.replace('[^A-Za-z0-9]+', ' ', regex=True)
-y_train.columns = y_train.columns.str.strip().str.replace('[^A-Za-z0-9]+', ' ', regex=True)
-t33_df.columns = t33_df.columns.str.strip().str.replace('[^A-Za-z0-9]+', ' ', regex=True)
-
-# Extract test features and targets if available
-X_test = t33_df[X_train.columns.intersection(t33_df.columns)]
-target_columns = [col for col in y_train.columns if col in t33_df.columns]
-y_actual_df = t33_df[target_columns] if target_columns else pd.DataFrame()
-
-# Convert to numpy
-X_test_np = X_test.values.astype(np.float32)
-
-# Load model and scalers
-chk_path = r'checkpoints/h_vs_tau_best_model.keras'
-model = tf.keras.models.load_model(chk_path)
-x_scaler = joblib.load(r'x_eta_scaler.pkl')  # ensure correct path if different for Tau
-y_scaler = joblib.load(r'y_eta_scaler.pkl')
+BASE_DIR = r"C:\Users\gantrav01\RD_predictability_11925"
+X_TRAIN_PATH = os.path.join(BASE_DIR, "H_vs_Tau_training.xlsx")         # used only for column names
+Y_TRAIN_PATH = os.path.join(BASE_DIR, "H_vs_Tau_target.xlsx")          # used only for target names
+TEST_PATH    = os.path.join(BASE_DIR, "Copy of T33_100_Samples_for_testing.xlsx")  # your test-only file
+MODEL_PATH   = os.path.join(BASE_DIR, "checkpoints", "h_vs_tau_best_model.keras")
+X_SCALER_PATH = os.path.join(BASE_DIR, "x_eta_scaler.pkl")  # change if different
+Y_SCALER_PATH = os.path.join(BASE_DIR, "y_eta_scaler.pkl")  # change if different
 
 # -----------------------
-# Streamlit UI Setup
+# Load files (X_train only for column names)
 # -----------------------
-st.set_page_config(page_title="RSM Visualization App", layout="wide")
-st.title("🎛️ Response Surface Modeling (RSM) Interactive App")
+st.set_page_config(page_title="RSM (Test-only) Visualizer", layout="wide")
+st.title("RSM Visualizer — operate on TEST file only")
 
-st.sidebar.header("⚙️ RSM Controls")
+try:
+    X_train = pd.read_excel(X_TRAIN_PATH)
+    y_train = pd.read_excel(Y_TRAIN_PATH)
+except Exception as e:
+    st.error(f"Could not read train header files: {e}")
+    st.stop()
 
-all_features = X_train.columns.tolist()
+try:
+    t33_df = pd.read_excel(TEST_PATH)
+except Exception as e:
+    st.error(f"Could not read test file (t33): {e}")
+    st.stop()
 
-# No defaults selected
-feature_x = st.sidebar.selectbox("Select Feature X", [""] + all_features, index=0)
-feature_y = st.sidebar.selectbox("Select Feature Y", [""] + all_features, index=0)
+# Clean column names (consistent cleaning)
+def clean_cols(df):
+    df = df.copy()
+    df.columns = df.columns.str.strip().str.replace('[^A-Za-z0-9]+', ' ', regex=True)
+    return df
 
-# Allow user to pick which output target to visualize
-if len(y_train.columns) > 1:
-    selected_target = st.sidebar.selectbox("Select Target", y_train.columns.tolist(), index=0)
+X_train = clean_cols(X_train)   # only for names
+y_train = clean_cols(y_train)
+t33_df   = clean_cols(t33_df)   # actual test data to be used for everything
+
+# Feature list: only those columns that exist both in X_train header and in test file
+feature_cols = [c for c in X_train.columns if c in t33_df.columns]
+if not feature_cols:
+    st.error("No shared feature columns found between X_train header and your test file. "
+             "Ensure the training header file matches test file column names.")
+    st.stop()
+
+# Target columns available in test file (intersection of y_train headers and test file)
+available_targets = [c for c in y_train.columns if c in t33_df.columns]
+
+# -----------------------
+# Load model & scalers
+# -----------------------
+try:
+    model = tf.keras.models.load_model(MODEL_PATH)
+except Exception as e:
+    st.error(f"Could not load model at {MODEL_PATH}: {e}")
+    st.stop()
+
+try:
+    x_scaler = joblib.load(X_SCALER_PATH)
+except Exception as e:
+    st.error(f"Could not load x scaler at {X_SCALER_PATH}: {e}")
+    st.stop()
+
+try:
+    y_scaler = joblib.load(Y_SCALER_PATH)
+except Exception as e:
+    st.error(f"Could not load y scaler at {Y_SCALER_PATH}: {e}")
+    st.stop()
+
+# -----------------------
+# UI controls
+# -----------------------
+st.sidebar.header("Controls (test-only)")
+st.sidebar.write("Note: X_train is used only for column names. All predictions use the test file (t33).")
+
+# Feature selectors - NO defaults (user must intentionally select)
+select_opts = ["-- select --"] + feature_cols
+feature_x = st.sidebar.selectbox("Feature X (horizontal axis)", select_opts, index=0)
+feature_y = st.sidebar.selectbox("Feature Y (vertical axis)", select_opts, index=0)
+
+# Target selector - no default
+target_opts = ["-- select --"] + (available_targets if available_targets else list(y_train.columns))
+selected_target = st.sidebar.selectbox("Target to visualize (choose from test file if available)", target_opts, index=0)
+
+# Optional: constant for h1 if present in test file
+h1_const = None
+if "h1" in t33_df.columns:
+    h1_const = st.sidebar.number_input("Constant value for h1 (if used)", value=float(t33_df["h1"].mean()))
+
+st.sidebar.markdown("---")
+st.sidebar.write(f"Test samples in file: {len(t33_df)}")
+
+# -----------------------
+# Helper: get scaler feature order
+# -----------------------
+if hasattr(x_scaler, "feature_names_in_"):
+    scaler_features = list(x_scaler.feature_names_in_)
 else:
-    selected_target = y_train.columns[0]
+    # fallback to header feature_cols (order from X_train)
+    scaler_features = feature_cols
 
-# Keep h1 constant if applicable
-h1_value = 100
-st.sidebar.write(f"Constant h1 = {h1_value}")
+# For safety, ensure scaler_features is a list of strings
+scaler_features = [str(f) for f in scaler_features]
 
 # -----------------------
-# RSM Logic (after selections)
+# User must select valid X, Y, and Target
 # -----------------------
-if feature_x and feature_y and feature_x != feature_y:
+if feature_x == "-- select --" or feature_y == "-- select --":
+    st.warning("Please select both Feature X and Feature Y (they must be distinct).")
+    st.stop()
 
-    # -----------------------
-    # Prepare Grid for RSM
-    # -----------------------
-    x_range = np.linspace(X_test[feature_x].min(), X_test[feature_x].max(), 40)
-    y_range = np.linspace(X_test[feature_y].min(), X_test[feature_y].max(), 40)
-    xx, yy = np.meshgrid(x_range, y_range)
+if feature_x == feature_y:
+    st.warning("Feature X and Feature Y must be different.")
+    st.stop()
 
-    grid = pd.DataFrame({feature_x: xx.ravel(), feature_y: yy.ravel()})
+if selected_target == "-- select --":
+    st.warning("Please select a target to visualize.")
+    st.stop()
 
-    # Fill other columns with mean
-    for col in X_train.columns:
-        if col not in [feature_x, feature_y]:
-            grid[col] = X_test[col].mean() if col in X_test.columns else X_train[col].mean()
+# -----------------------
+# Build grid using test-only data
+# -----------------------
+# Use ranges from test file (t33_df) for the chosen variables
+x_min, x_max = float(t33_df[feature_x].min()), float(t33_df[feature_x].max())
+y_min, y_max = float(t33_df[feature_y].min()), float(t33_df[feature_y].max())
 
-    # Add constant h1 if exists
-    if "h1" in X_train.columns:
-        grid["h1"] = h1_value
+n_grid = 40
+xx_vals = np.linspace(x_min, x_max, n_grid)
+yy_vals = np.linspace(y_min, y_max, n_grid)
+xx, yy = np.meshgrid(xx_vals, yy_vals)
 
-    # -----------------------
-    # Ensure Feature Alignment
-    # -----------------------
-    scaler_features = (
-        list(x_scaler.feature_names_in_) if hasattr(x_scaler, "feature_names_in_")
-        else list(X_train.columns)
-    )
+grid = pd.DataFrame({feature_x: xx.ravel(), feature_y: yy.ravel()})
 
-    # Align both grid and X_test columns with scaler
-    grid = grid.reindex(columns=scaler_features, fill_value=X_train.mean().iloc[0])
-    X_test = X_test.reindex(columns=scaler_features, fill_value=X_train.mean().iloc[0])
-
-    # -----------------------
-    # Scale and Predict
-    # -----------------------
-    grid_scaled = x_scaler.transform(grid)
-    X_test_scaled = x_scaler.transform(X_test)
-
-    y_pred_grid_scaled = model.predict(grid_scaled)
-    y_pred_test_scaled = model.predict(X_test_scaled)
-
-    # Inverse transform predictions
-    y_pred_grid = y_scaler.inverse_transform(y_pred_grid_scaled)
-    y_pred_test = y_scaler.inverse_transform(y_pred_test_scaled)
-
-    # Select output index
-    output_index = y_train.columns.get_loc(selected_target)
-    z = y_pred_grid[:, output_index].reshape(xx.shape)
-
-    # Colorbar range (actual)
-    vmin, vmax = z.min(), z.max()
-
-    # -----------------------
-    # Layout
-    # -----------------------
-    col1, col2 = st.columns(2)
-
-    # ---- Left: 2D RSM Plot ----
-    with col1:
-        st.subheader(f"📈 Response Surface — Predicted {selected_target}")
-        fig, ax = plt.subplots(figsize=(6, 5))
-        contour = ax.contourf(xx, yy, z, cmap="viridis", levels=20, vmin=vmin, vmax=vmax)
-        cbar = plt.colorbar(contour)
-        cbar.set_label(f"Predicted {selected_target} (Actual Scale)")
-        ax.set_xlabel(feature_x)
-        ax.set_ylabel(feature_y)
-        ax.set_title(f"Response Surface of {selected_target}")
-        st.pyplot(fig)
-
-    # ---- Right: Actual vs Predicted ----
-    with col2:
-        st.subheader(f"📊 Actual vs Predicted {selected_target} (Test Data)")
-
-        if not y_actual_df.empty and selected_target in y_actual_df.columns:
-            y_actual = y_actual_df[selected_target].values
+# Fill other features with their mean computed from the test file (perform on test alone)
+for col in scaler_features:
+    if col not in [feature_x, feature_y]:
+        if col in t33_df.columns:
+            grid[col] = float(t33_df[col].mean())
         else:
-            y_actual = np.zeros_like(y_pred_test[:, output_index])
+            # feature expected by scaler but not present in test file — fill with 0
+            grid[col] = 0.0
 
-        # Compute error metrics
-        eps = 1e-8
-        if np.any(y_actual):
-            t1_error = np.mean(np.abs((y_actual - y_pred_test[:, output_index]) / (y_actual + eps))) * 100
-        else:
-            t1_error = np.nan
+# If user provided h1 const and 'h1' is among scaler_features, set it
+if h1_const is not None and "h1" in scaler_features:
+    grid["h1"] = float(h1_const)
 
-        overall_error = np.mean(
-            np.abs(
-                (y_scaler.inverse_transform(y_scaler.transform(y_train)) - y_pred_test)
-                / (y_scaler.inverse_transform(y_scaler.transform(y_train)) + eps)
-            )
-        ) * 100
+# Reindex grid to scaler_features order (this ensures column names/order match scaler)
+grid = grid.reindex(columns=scaler_features, fill_value=0.0)
 
-        st.write(f"**T1 Error %:** {t1_error:.2f}%")
-        st.write(f"**Overall Avg Error %:** {overall_error:.2f}%")
+# Prepare test data for model input (align with scaler_features)
+X_test_for_model = t33_df.reindex(columns=scaler_features, fill_value=0.0)
 
-        df_results = pd.DataFrame({
-            feature_x: X_test[feature_x].values,
-            feature_y: X_test[feature_y].values,
-            f"Predicted_{selected_target}": y_pred_test[:, output_index]
-        })
+# -----------------------
+# Check shapes match model input
+# -----------------------
+expected_input_dim = None
+try:
+    # for Keras Functional/Sequential: model.input_shape is like (None, n_features)
+    expected_input_shape = model.input_shape
+    if isinstance(expected_input_shape, (list, tuple)) and len(expected_input_shape) >= 2:
+        expected_input_dim = expected_input_shape[1]
+except Exception:
+    expected_input_dim = None
 
-        if np.any(y_actual):
-            df_results[f"Actual_{selected_target}"] = y_actual
+if expected_input_dim is not None:
+    if expected_input_dim != grid.shape[1]:
+        st.error(f"Model expected input dim = {expected_input_dim}, but prepared grid has {grid.shape[1]} features.\n"
+                 "This usually means the model was trained with a different set/order of features. "
+                 "Check the scaler & model training pipeline.")
+        st.stop()
 
-        st.dataframe(df_results.head(15))
+# -----------------------
+# Scale, predict, inverse-transform
+# -----------------------
+try:
+    grid_scaled = x_scaler.transform(grid)        # pandas -> scaler will check names if present
+    X_test_scaled = x_scaler.transform(X_test_for_model)
+except Exception as e:
+    st.error(f"Error while scaling inputs (mismatch with scaler feature names/order): {e}")
+    st.stop()
 
+# Predictions (scaled)
+y_grid_scaled = model.predict(grid_scaled)
+y_test_scaled = model.predict(X_test_scaled)
+
+# Inverse-transform predictions to original target scale
+try:
+    y_grid = y_scaler.inverse_transform(y_grid_scaled)
+    y_test_pred = y_scaler.inverse_transform(y_test_scaled)
+except Exception as e:
+    st.error(f"Error while inverse-transforming predictions with y_scaler: {e}")
+    st.stop()
+
+# -----------------------
+# Map target index
+# -----------------------
+if selected_target in list(y_train.columns):
+    output_index = list(y_train.columns).index(selected_target)
 else:
-    st.warning("⚠️ Please select two distinct features (X and Y) to visualize the RSM plot.")
+    st.error("Selected target not found in y_train headers. Check target names.")
+    st.stop()
+
+# Get 2D z for contour (target slice)
+z_vals = y_grid[:, output_index].reshape(xx.shape)
+
+# -----------------------
+# Compute error metrics using test file actuals (if present)
+# -----------------------
+eps = 1e-8
+if selected_target in t33_df.columns:
+    y_actual_t = t33_df[selected_target].values
+    y_pred_t = y_test_pred[:, output_index]
+    # T1 (selected target) MAPE
+    t_mape = np.mean(np.abs((y_actual_t - y_pred_t) / (np.abs(y_actual_t) + eps))) * 100
+else:
+    t_mape = np.nan
+
+# Overall MAPE across all targets that are present in test file (intersection)
+targets_in_test = [c for c in y_train.columns if c in t33_df.columns]
+if targets_in_test:
+    # Build actuals matrix and predicted matrix for the same column order
+    actuals_mat = t33_df[targets_in_test].values
+    # determine indices of these targets in y_train order
+    idxs = [list(y_train.columns).index(c) for c in targets_in_test]
+    preds_mat = y_test_pred[:, idxs]
+    overall_mape = np.mean(np.abs((actuals_mat - preds_mat) / (np.abs(actuals_mat) + eps))) * 100
+else:
+    overall_mape = np.nan
+
+# -----------------------
+# Display results
+# -----------------------
+col_l, col_r = st.columns([1, 1])
+
+with col_l:
+    st.subheader(f"Response Surface — Predicted `{selected_target}` (test-only)")
+    fig, ax = plt.subplots(figsize=(6, 5))
+    contour = ax.contourf(xx, yy, z_vals, cmap="viridis", levels=20)
+    cbar = fig.colorbar(contour, ax=ax)
+    cbar.set_label(f"Predicted {selected_target} (original scale)")
+    ax.set_xlabel(feature_x)
+    ax.set_ylabel(feature_y)
+    ax.set_title(f"Predicted {selected_target} (from test-only grid)")
+    st.pyplot(fig)
+
+with col_r:
+    st.subheader("Prediction metrics (test-only)")
+
+    if not np.isnan(t_mape):
+        st.metric(label=f"{selected_target} Mean Absolute % Error (MAPE)", value=f"{t_mape:.2f}%")
+    else:
+        st.write(f"MAPE for `{selected_target}`: N/A (actuals not found in test file)")
+
+    if not np.isnan(overall_mape):
+        st.metric(label="Overall Avg MAPE (all targets present in test)", value=f"{overall_mape:.2f}%")
+    else:
+        st.write("Overall Avg MAPE: N/A (no target columns present in test file)")
+
+    # Show a small table of actual vs predicted for the first 15 test rows
+    st.markdown("### Sample: Actual vs Predicted (first 15 rows from test file)")
+    sample_df = pd.DataFrame({
+        feature_x: t33_df[feature_x].values[:15],
+        feature_y: t33_df[feature_y].values[:15],
+        f"Pred_{selected_target}": y_test_pred[:15, output_index]
+    })
+    if selected_target in t33_df.columns:
+        sample_df[f"Actual_{selected_target}"] = t33_df[selected_target].values[:15]
+    st.dataframe(sample_df)
+
+st.success("Done — predictions performed only on the test file (t33).")
+#===========================================================================================
 #!/usr/bin/env python
 # coding: utf-8
 
