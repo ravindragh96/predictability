@@ -17,13 +17,13 @@ st.title("🌀 Response Surface Modeling (RSM) using Synthetic Data (ANN Predict
 
 BASE_DIR = r"C:\Users\gantrav01\RD_predictability_11925"
 
-SYNTHETIC_PATH = os.path.join(BASE_DIR, "synthetic_eta_predictions.xlsx")  # synthetic ANN data
+SYNTHETIC_PATH = os.path.join(BASE_DIR, "synthetic_eta_predictions.xlsx")  # your generated synthetic data
 MODEL_PATH = os.path.join(BASE_DIR, "checkpoints", "h_vs_eta_best_model.keras")
 X_SCALER_PATH = os.path.join(BASE_DIR, "x_eta_scaler.pkl")
 Y_SCALER_PATH = os.path.join(BASE_DIR, "y_eta_scaler.pkl")
 
 # -----------------------
-# 2️⃣ Load Data and Model
+# 2️⃣ Load Data & Model
 # -----------------------
 try:
     df = pd.read_excel(SYNTHETIC_PATH)
@@ -60,35 +60,35 @@ grid_resolution = st.sidebar.slider("Grid Resolution", 30, 100, 60)
 # -----------------------
 X_mean = df[input_cols].mean(numeric_only=True)
 
-# Meshgrid for selected features
+# Create meshgrid for selected features
 x_range = np.linspace(df[feature_x].min(), df[feature_x].max(), grid_resolution)
 y_range = np.linspace(df[feature_y].min(), df[feature_y].max(), grid_resolution)
 X1, X2 = np.meshgrid(x_range, y_range)
 
+# Build the grid DataFrame (X, Y vary; others fixed)
 grid = pd.DataFrame({feature_x: X1.ravel(), feature_y: X2.ravel()})
-
-# Fill remaining features with mean values
 for col in input_cols:
     if col not in [feature_x, feature_y]:
-        grid[col] = X_mean[col]
+        grid[col] = X_mean[col]  # keep other columns constant
 
 # -----------------------
-# 5️⃣ Feature Alignment Fix (Critical)
+# 5️⃣ Ensure Feature Alignment (Fix)
 # -----------------------
 if hasattr(x_scaler, "feature_names_in_"):
     scaler_features = list(x_scaler.feature_names_in_)
 else:
     scaler_features = list(df[input_cols].columns)
 
-# Add any missing columns and reorder to match training order
+# Fill missing columns without altering selected X, Y
 for col in scaler_features:
     if col not in grid.columns:
         grid[col] = X_mean[col] if col in X_mean else 0.0
 
+# Reorder to match training order
 grid = grid.reindex(columns=scaler_features, fill_value=0.0)
 
 # -----------------------
-# 6️⃣ Predict using ANN Model
+# 6️⃣ Predict using Model
 # -----------------------
 grid_scaled = x_scaler.transform(grid.astype(np.float32))
 preds_scaled = model.predict(grid_scaled, verbose=0)
@@ -98,7 +98,7 @@ output_index = output_cols.index(target_col)
 preds = preds_all[:, output_index].reshape(X1.shape)
 
 # -----------------------
-# 7️⃣ Plot Contour (Plotly)
+# 7️⃣ Plot Contour
 # -----------------------
 st.subheader(f"📈 Response Surface — {target_col} vs {feature_x} & {feature_y}")
 
@@ -122,7 +122,7 @@ fig.add_trace(go.Contour(
     )
 ))
 
-# Scatter Layer: synthetic data points
+# Scatter of synthetic points
 fig.add_trace(go.Scatter(
     x=df[feature_x],
     y=df[feature_y],
@@ -157,17 +157,18 @@ st.plotly_chart(fig, use_container_width=True)
 # 8️⃣ Display Sample Predictions
 # -----------------------
 st.markdown(f"### 🔍 Sample Predicted Values for `{target_col}`")
-sample_df = grid[[feature_x, feature_y]].copy()
+
+sample_df = grid[[feature_x, feature_y]].copy().head(10)
 sample_df[f"Predicted_{target_col}"] = preds.ravel()[:10]
-st.dataframe(sample_df.head(10), use_container_width=True)
+st.dataframe(sample_df, use_container_width=True)
 
 # -----------------------
 # 9️⃣ Info
 # -----------------------
 st.info("""
 ✅ **Interpretation:**  
-- Red = High predicted output  
-- Green = Low predicted output  
-- Blue dots = Actual synthetic points from dataset  
-- Hover anywhere on the contour to see predicted ANN output values.
+- Red → High predicted output  
+- Green → Low predicted output  
+- Blue dots → Synthetic sample points  
+- Hover to view predicted ANN output for any X–Y pair.  
 """)
