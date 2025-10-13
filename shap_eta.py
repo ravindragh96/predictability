@@ -337,3 +337,143 @@ if output_to_plot in y_actual_df.columns:
 else:
     st.warning("⚠️ No actual values available for comparison.")
 
+
+# -----------------------
+# 11️⃣ Feature vs Target Line Chart + Actual vs Predicted Scatter
+# -----------------------
+if output_to_plot in y_actual_df.columns:
+    st.markdown(f"### 📈 {f1} vs {output_to_plot} — Error at Each Stage")
+
+    # Prepare data for plotting
+    plot_df = pd.DataFrame({
+        f1: X_test[f1].values,
+        f"Actual_{output_to_plot}": y_actual,
+        f"Predicted_{output_to_plot}": y_pred[:, output_index],
+        "Error_%": percent_errors
+    }).sort_values(by=f1).reset_index(drop=True)
+
+    # Create two side-by-side columns
+    col_line, col_scatter = st.columns(2)
+
+    # -----------------------
+    # 📊 Left: Line Chart (Feature vs Target)
+    # -----------------------
+    with col_line:
+        fig_feature = go.Figure()
+
+        # Actual Line
+        fig_feature.add_trace(go.Scatter(
+            x=plot_df[f1],
+            y=plot_df[f"Actual_{output_to_plot}"],
+            mode="lines+markers",
+            name="Ground Truth",
+            line=dict(color="blue", width=3),
+            marker=dict(size=8, color="blue"),
+            hovertemplate=f"<b>{f1}</b>: %{{x:.3f}}<br><b>Actual:</b> %{{y:.3f}}<extra></extra>"
+        ))
+
+        # Predicted Line
+        fig_feature.add_trace(go.Scatter(
+            x=plot_df[f1],
+            y=plot_df[f"Predicted_{output_to_plot}"],
+            mode="lines+markers",
+            name="Prediction",
+            line=dict(color="orange", width=3, dash="dot"),
+            marker=dict(size=8, color="orange"),
+            hovertemplate=f"<b>{f1}</b>: %{{x:.3f}}<br><b>Predicted:</b> %{{y:.3f}}<extra></extra>"
+        ))
+
+        # Add Error Labels per point
+        for i in range(len(plot_df)):
+            fig_feature.add_annotation(
+                x=plot_df[f1].iloc[i],
+                y=(plot_df[f"Actual_{output_to_plot}"].iloc[i] + plot_df[f"Predicted_{output_to_plot}"].iloc[i]) / 2,
+                text=f"{plot_df['Error_%'].iloc[i]:.2f}%",
+                showarrow=False,
+                font=dict(size=10, color="red"),
+                yshift=10
+            )
+
+        # Add Overall Avg Error Annotation
+        overall_avg_error = np.mean(plot_df["Error_%"])
+        fig_feature.add_annotation(
+            x=0.5, y=0.5,
+            xref="paper", yref="paper",
+            text=f"<b>Overall Avg Error: {overall_avg_error:.2f}%</b>",
+            showarrow=False,
+            font=dict(size=14, color="black"),
+            bgcolor="white",
+            bordercolor="black",
+            borderwidth=1,
+            borderpad=4
+        )
+
+        fig_feature.update_layout(
+            title=f"{output_to_plot} vs {f1} (Error at Each Stage)",
+            xaxis_title=f1,
+            yaxis_title=f"{output_to_plot}",
+            template="plotly_white",
+            legend=dict(x=0, y=1.1, orientation="h"),
+            height=600,
+            hovermode="x unified",
+            font=dict(size=13)
+        )
+
+        st.plotly_chart(fig_feature, use_container_width=True)
+
+    # -----------------------
+    # 📈 Right: Scatter Plot (Actual vs Predicted)
+    # -----------------------
+    with col_scatter:
+        st.subheader("🔹 Actual vs Predicted Scatter")
+
+        fig_scatter = go.Figure()
+
+        # Scatter points
+        fig_scatter.add_trace(go.Scatter(
+            x=plot_df[f"Actual_{output_to_plot}"],
+            y=plot_df[f"Predicted_{output_to_plot}"],
+            mode="markers",
+            name="Data Points",
+            marker=dict(size=8, color="blue", line=dict(width=1, color="black")),
+            text=[f"Actual: {a:.3f}<br>Predicted: {p:.3f}<br>Error: {e:.2f}%"
+                  for a, p, e in zip(plot_df[f"Actual_{output_to_plot}"],
+                                     plot_df[f"Predicted_{output_to_plot}"],
+                                     plot_df["Error_%"])],
+            hoverinfo="text"
+        ))
+
+        # Perfect 45° reference line
+        min_val = min(plot_df[f"Actual_{output_to_plot}"].min(), plot_df[f"Predicted_{output_to_plot}"].min())
+        max_val = max(plot_df[f"Actual_{output_to_plot}"].max(), plot_df[f"Predicted_{output_to_plot}"].max())
+        fig_scatter.add_trace(go.Scatter(
+            x=[min_val, max_val],
+            y=[min_val, max_val],
+            mode="lines",
+            name="Perfect Fit",
+            line=dict(color="red", width=2, dash="dot")
+        ))
+
+        fig_scatter.update_layout(
+            title=f"Actual vs Predicted ({output_to_plot})",
+            xaxis_title=f"Actual {output_to_plot}",
+            yaxis_title=f"Predicted {output_to_plot}",
+            template="plotly_white",
+            legend=dict(x=0, y=1.1, orientation="h"),
+            height=600,
+            hovermode="closest",
+            font=dict(size=13)
+        )
+
+        st.plotly_chart(fig_scatter, use_container_width=True)
+
+    # Display Summary Metrics Below
+    st.markdown("---")
+    st.markdown(f"**📉 Overall Average Error:** `{overall_avg_error:.2f}%`")
+    st.markdown(f"**📈 Max Error:** `{plot_df['Error_%'].max():.2f}%`")
+    st.markdown(f"**📊 Min Error:** `{plot_df['Error_%'].min():.2f}%`")
+
+else:
+    st.warning("⚠️ No actual values available for comparison.")
+s
+
