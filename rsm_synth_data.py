@@ -8,13 +8,13 @@ import streamlit as st
 import plotly.graph_objects as go
 import tensorflow as tf
 import joblib
-import matplotlib.pyplot as plt
+from sklearn.neighbors import NearestNeighbors
 
 # -----------------------
 # 1️⃣ Setup
 # -----------------------
 st.set_page_config(page_title="RSM Contour App", layout="wide")
-st.title("🎛️ Response Surface Modeling (RSM) — Full Dashboard with Error Visualization")
+st.title("🎛️ Response Surface Modeling (RSM) — ANN-based Interactive Dashboard")
 
 BASE_DIR = r"C:\Users\gantrav01\RD_predictability_11925"
 
@@ -114,11 +114,11 @@ else:
     percent_errors = np.zeros_like(y_pred[:, output_index])
 
 # -----------------------
-# 7️⃣ Contour Grid
+# 7️⃣ Create Synthetic Grid
 # -----------------------
 f1, f2 = feature_x, feature_y
-f1_range = np.linspace(X_test[f1].min(), X_test[f1].max(), 60)
-f2_range = np.linspace(X_test[f2].min(), X_test[f2].max(), 60)
+f1_range = np.linspace(X_train[f1].min(), X_train[f1].max(), 60)
+f2_range = np.linspace(X_train[f2].min(), X_train[f2].max(), 60)
 F1, F2 = np.meshgrid(f1_range, f2_range)
 
 grid = pd.DataFrame({f1: F1.ravel(), f2: F2.ravel()})
@@ -133,39 +133,83 @@ preds = y_scaler.inverse_transform(preds_scaled)[:, output_index]
 preds = preds.reshape(F1.shape)
 
 # -----------------------
-# 8️⃣ Local MAPE
+# 8️⃣ Check Gap Coverage (Validation)
 # -----------------------
-f1_min, f1_max = X_test[f1].min(), X_test[f1].max()
-f2_min, f2_max = X_test[f2].min(), X_test[f2].max()
-f1_margin = (f1_max - f1_min) * 0.10
-f2_margin = (f2_max - f2_min) * 0.10
-
-mask = (
-    (X_test[f1] >= (f1_min + f1_margin)) & (X_test[f1] <= (f1_max - f1_margin)) &
-    (X_test[f2] >= (f2_min + f2_margin)) & (X_test[f2] <= (f2_max - f2_margin))
-)
-local_errors = percent_errors[mask]
-local_mape = np.mean(local_errors) if len(local_errors) > 0 else np.nan
+try:
+    nn = NearestNeighbors(n_neighbors=1).fit(X_train[[f1, f2]])
+    distances, _ = nn.kneighbors(grid[[f1, f2]])
+    avg_gap = np.mean(distances)
+    st.sidebar.markdown("---")
+    st.sidebar.markdown(f"**🧮 Avg Gap Distance:** `{avg_gap:.3f}`")
+    if avg_gap < (0.1 * (X_train[f1].max() - X_train[f1].min())):
+        st.sidebar.success("✅ Synthetic data fills gaps effectively.")
+    else:
+        st.sidebar.warning("⚠️ Sparse regions may still exist.")
+except Exception as e:
+    st.sidebar.warning(f"Gap coverage check skipped: {e}")
 
 # -----------------------
-# 9️⃣ Classic RSM Contour + Donuts
+# 9️⃣ Interactive Plotly Contour + Donuts
 # -----------------------
 col1, col2 = st.columns([2, 1])
 
 with col1:
-    st.subheader(f"📈 Classic RSM Contour: {f1} vs {f2}")
+    st.subheader(f"📈 Interactive RSM Contour: {f1} vs {f2}")
 
-    fig, ax = plt.subplots(figsize=(7, 5))
-    cp = ax.contourf(f1_range, f2_range, preds, levels=20, cmap='RdYlGn_r')
-    cbar = plt.colorbar(cp, ax=ax)
-    cbar.set_label(f"{output_to_plot}", rotation=270, labelpad=15)
-    ax.scatter(X_test[f1], X_test[f2], color='blue', s=25, edgecolors='black', label='Sample Points')
-    ax.set_xlabel(f1)
-    ax.set_ylabel(f2)
-    ax.set_title(f"{output_to_plot} — RSM Contour (H1 fixed at 100)")
-    ax.legend()
-    st.pyplot(fig)
+    hover_text = [
+        f"<b>{f1}</b>: {x:.3f}<br>"
+        f"<b>{f2}</b>: {y:.3f}<br>"
+        f"<b>Predicted {output_to_plot}</b>: {z:.3f}"
+        for x, y, z in zip(grid[f1], grid[f2], preds.flatten())
+    ]
 
+    fig = go.Figure(data=go.Contour(
+        z=preds,
+        x=f1_range,
+        y=f2_range,
+        colorscale="RdYlGn_r",
+        colorbar=dict(title=f"{output_to_plot}"),
+        contours=dict(
+            coloring="fill",
+            showlabels=True,
+            labelfont=dict(size=12, color="black")
+        ),
+        hoverinfo="text",
+        text=hover_text
+    ))
+
+    # Overlay synthetic/test points
+    fig.add_trace(go.Scatter(
+        x=X_test[f1],
+        y=X_test[f2],
+        mode="markers",
+        marker=dict(size=7, color="black", symbol="x"),
+        name="Synthetic/Test Points"
+    ))
+
+    # Overlay training data
+    if f1 in X_train.columns and f2 in X_train.columns:
+        fig.add_trace(go.Scatter(
+            x=X_train[f1],
+            y=X_train[f2],
+            mode="markers",
+            marker=dict(size=6, color="white", line=dict(width=1, color="black")),
+            name="Original Training Data",
+            opacity=0.7
+        ))
+
+    fig.update_layout(
+        title=f"{output_to_plot} — RSM Surface (ANN Predictions)",
+        xaxis_title=f1,
+        yaxis_title=f2,
+        width=850,
+        height=600,
+        template="plotly_white"
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+# ---- Right Column: Donut Charts ----
 with col2:
     st.subheader("📊 Error Performance Summary")
 
@@ -216,55 +260,3 @@ compare_df = pd.DataFrame({
 if np.any(y_actual):
     compare_df[f"Actual_{output_to_plot}"] = y_actual[:10]
 st.dataframe(compare_df, use_container_width=True)
-
-# -----------------------
-# 11️⃣ Scatter Comparison
-# -----------------------
-if output_to_plot in y_actual_df.columns:
-    st.markdown(f"### 📊 {output_to_plot} — Actual vs Predicted Distribution")
-
-    plot_df = pd.DataFrame({
-        f1: X_test[f1].values,
-        f2: X_test[f2].values,
-        f"Actual_{output_to_plot}": y_actual,
-        f"Predicted_{output_to_plot}": y_pred[:, output_index],
-    })
-    plot_df["Error_%"] = np.abs(plot_df[f"Actual_{output_to_plot}"] - plot_df[f"Predicted_{output_to_plot}"]) / (
-        np.abs(plot_df[f"Actual_{output_to_plot}"]) + 1e-8
-    ) * 100
-
-    fig_scatter = go.Figure()
-    fig_scatter.add_trace(go.Scatter(
-        x=plot_df[f1], y=plot_df[f2], mode="markers",
-        marker=dict(size=10, color=plot_df[f"Actual_{output_to_plot}"], colorscale="Blues",
-                    colorbar=dict(title=f"Actual {output_to_plot}"), symbol="circle", line=dict(width=1, color="black")),
-        name="Actual Values"
-    ))
-    fig_scatter.add_trace(go.Scatter(
-        x=plot_df[f1], y=plot_df[f2], mode="markers",
-        marker=dict(size=10, color=plot_df[f"Predicted_{output_to_plot}"], colorscale="Oranges",
-                    colorbar=dict(title=f"Predicted {output_to_plot}"), symbol="diamond", line=dict(width=1, color="black")),
-        name="Predicted Values"
-    ))
-
-    fig_scatter.update_layout(
-        title=f"{output_to_plot} — Actual vs Predicted Scatter",
-        xaxis_title=f1, yaxis_title=f2, template="plotly_white", height=700
-    )
-
-    overall_avg_error = np.mean(plot_df["Error_%"])
-    fig_scatter.add_annotation(
-        x=0.5, y=1.05, xref="paper", yref="paper",
-        text=f"<b>Overall Avg Error: {overall_avg_error:.2f}%</b>",
-        showarrow=False, bgcolor="white", bordercolor="black", borderwidth=1
-    )
-
-    st.plotly_chart(fig_scatter, use_container_width=True)
-
-    st.markdown("---")
-    st.markdown(f"**📉 Average Error %:** `{overall_avg_error:.2f}`")
-    st.markdown(f"**📈 Max Error %:** `{plot_df['Error_%'].max():.2f}`")
-    st.markdown(f"**📊 Min Error %:** `{plot_df['Error_%'].min():.2f}`")
-
-else:
-    st.warning("⚠️ No actual values available for comparison.")
