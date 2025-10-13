@@ -163,4 +163,7 @@ st.dataframe(sample_df, use_container_width=True)
 st.info("""
 ✅ **Interpretation:**
 - Red → Higher predicted output  
-- Green →
+- Green → Lower predicted output  
+- Hover on contour to inspect ANN-predicted Z  
+- Blue points = actual synthetic data used  
+""")
