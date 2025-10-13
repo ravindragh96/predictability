@@ -60,46 +60,35 @@ grid_resolution = st.sidebar.slider("Grid Resolution", 30, 100, 60)
 # -----------------------
 X_mean = df[input_cols].mean(numeric_only=True)
 
-# Create meshgrid for selected features (these must vary)
 x_range = np.linspace(df[feature_x].min(), df[feature_x].max(), grid_resolution)
 y_range = np.linspace(df[feature_y].min(), df[feature_y].max(), grid_resolution)
 X1, X2 = np.meshgrid(x_range, y_range)
 
-# Build base grid (only X and Y vary)
-grid = pd.DataFrame({feature_x: X1.ravel(), feature_y: X2.ravel()})
+# Build grid: X and Y varying, others set to mean
+grid = pd.DataFrame({
+    feature_x: X1.ravel(),
+    feature_y: X2.ravel(),
+})
 
-# Fill other columns with their mean
 for col in input_cols:
     if col not in [feature_x, feature_y]:
         grid[col] = X_mean[col]
 
-# -----------------------
-# 5️⃣ Feature Alignment Fix (Preserve X and Y values properly)
-# -----------------------
+# Ensure scaler/model columns and correct order
 if hasattr(x_scaler, "feature_names_in_"):
     scaler_features = list(x_scaler.feature_names_in_)
 else:
     scaler_features = list(df[input_cols].columns)
 
-# Save X, Y before reindexing
-x_vals = grid[feature_x].copy()
-y_vals = grid[feature_y].copy()
-
-# Fill missing columns (for any unseen features)
 for col in scaler_features:
     if col not in grid.columns:
-        grid[col] = X_mean[col] if col in X_mean else 0.0
+        grid[col] = X_mean.get(col, 0.0)
 
-# Ensure correct order as per training
 grid = grid.reindex(columns=scaler_features, fill_value=0.0)
 
-# Restore X and Y values (avoid being overwritten)
-grid[feature_x] = x_vals.values
-grid[feature_y] = y_vals.values
-
-# Debug check (optional)
-# st.write("✅ X range:", grid[feature_x].min(), "→", grid[feature_x].max())
-# st.write("✅ Y range:", grid[feature_y].min(), "→", grid[feature_y].max())
+# 🔥 Ensure X and Y mesh values are preserved (no accidental mean overwrite)
+grid[feature_x] = X1.ravel()
+grid[feature_y] = X2.ravel()
 
 # -----------------------
 # 6️⃣ Predict using ANN Model
