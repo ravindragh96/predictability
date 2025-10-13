@@ -357,18 +357,18 @@ else:
 
 
 # -----------------------
-# 11️⃣ Scatter Comparison of Actual vs Predicted T1 Across f1 & f2 (Fixed for Actual Values)
+# 11️⃣ Scatter Comparison of Actual vs Predicted T1 Across f1 & f2 (Fixed Colorbars)
 # -----------------------
 st.markdown(f"### 📊 {output_to_plot} Comparison Across {f1} and {f2}")
 
-# Check if actual values exist in test dataset
+# Ensure actual values exist
 if output_to_plot in y_actual_df.columns:
     actual_values = y_actual_df[output_to_plot].values
 else:
-    st.warning(f"⚠️ No '{output_to_plot}' column found in test data — using scaled dummy zeros for visualization.")
+    st.warning(f"⚠️ No '{output_to_plot}' column found in test data — using zeros for visualization.")
     actual_values = np.zeros_like(y_pred[:, output_index])
 
-# Prepare combined dataframe
+# Prepare dataframe
 plot_df = pd.DataFrame({
     f1: X_test[f1].values,
     f2: X_test[f2].values,
@@ -376,18 +376,18 @@ plot_df = pd.DataFrame({
     f"Predicted_{output_to_plot}": y_pred[:, output_index],
 })
 
-# Compute error %
+# Compute Error %
 eps = 1e-8
 plot_df["Error_%"] = np.abs(plot_df[f"Actual_{output_to_plot}"] - plot_df[f"Predicted_{output_to_plot}"]) / (
     np.abs(plot_df[f"Actual_{output_to_plot}"]) + eps
 ) * 100
 
-# -----------------------
-# Build Scatter Plot
-# -----------------------
+# Create Figure
 fig_scatter = go.Figure()
 
+# -----------------------
 # Actual Layer
+# -----------------------
 fig_scatter.add_trace(go.Scatter(
     x=plot_df[f1],
     y=plot_df[f2],
@@ -397,7 +397,11 @@ fig_scatter.add_trace(go.Scatter(
         size=10,
         color=plot_df[f"Actual_{output_to_plot}"],
         colorscale="Blues",
-        colorbar=dict(title=f"Actual {output_to_plot}"),
+        colorbar=dict(
+            title=f"Actual {output_to_plot}",
+            x=1.03,  # Position to the right of the plot
+            xanchor="left"
+        ),
         symbol="circle",
         line=dict(width=1, color="black"),
         showscale=True
@@ -411,7 +415,9 @@ fig_scatter.add_trace(go.Scatter(
     hoverinfo="text"
 ))
 
+# -----------------------
 # Predicted Layer
+# -----------------------
 fig_scatter.add_trace(go.Scatter(
     x=plot_df[f1],
     y=plot_df[f2],
@@ -421,7 +427,11 @@ fig_scatter.add_trace(go.Scatter(
         size=10,
         color=plot_df[f"Predicted_{output_to_plot}"],
         colorscale="Oranges",
-        colorbar=dict(title=f"Predicted {output_to_plot}"),
+        colorbar=dict(
+            title=f"Predicted {output_to_plot}",
+            x=1.12,  # Move slightly more to the right to avoid overlap
+            xanchor="left"
+        ),
         symbol="diamond",
         line=dict(width=1, color="black"),
         showscale=True
@@ -449,10 +459,10 @@ fig_scatter.update_layout(
     font=dict(size=13)
 )
 
-# Add overall error annotation
+# Add Overall Error Annotation
 overall_avg_error = np.mean(plot_df["Error_%"])
 fig_scatter.add_annotation(
-    x=0.5, y=1.07,
+    x=0.5, y=1.08,
     xref="paper", yref="paper",
     text=f"<b>Overall Avg Error: {overall_avg_error:.2f}%</b>",
     showarrow=False,
@@ -465,7 +475,7 @@ fig_scatter.add_annotation(
 
 st.plotly_chart(fig_scatter, use_container_width=True)
 
-# Summary
+# Summary Stats
 st.markdown("---")
 st.markdown(f"**📉 Average Error %:** `{overall_avg_error:.2f}`")
 st.markdown(f"**📈 Max Error %:** `{plot_df['Error_%'].max():.2f}`")
