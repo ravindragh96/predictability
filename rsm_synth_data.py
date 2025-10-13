@@ -8,13 +8,12 @@ import streamlit as st
 import plotly.graph_objects as go
 import tensorflow as tf
 import joblib
-from sklearn.neighbors import NearestNeighbors
 
 # -----------------------
 # 1️⃣ Setup
 # -----------------------
 st.set_page_config(page_title="RSM Contour App", layout="wide")
-st.title("🎛️ Response Surface Modeling (RSM) — ANN-based Interactive Dashboard")
+st.title("🎛️ Response Surface Modeling (RSM) — ANN-based Contour Visualization")
 
 BASE_DIR = r"C:\Users\gantrav01\RD_predictability_11925"
 
@@ -105,26 +104,24 @@ if output_to_plot in y_actual_df.columns:
     percent_errors = abs_errors / (y_actual + eps) * 100
     global_mape = np.mean(percent_errors)
     avg_error = np.mean(percent_errors)
-    max_error = np.max(percent_errors)
-    min_error = np.min(percent_errors)
 else:
     y_actual = np.zeros_like(y_pred[:, output_index])
     st.warning(f"⚠️ No actual values for {output_to_plot} found — skipping MAPE check.")
-    global_mape = avg_error = max_error = min_error = np.nan
+    global_mape = avg_error = np.nan
     percent_errors = np.zeros_like(y_pred[:, output_index])
 
 # -----------------------
-# 7️⃣ Create Synthetic Grid
+# 7️⃣ Generate RSM Grid Data
 # -----------------------
 f1, f2 = feature_x, feature_y
-f1_range = np.linspace(X_train[f1].min(), X_train[f1].max(), 60)
-f2_range = np.linspace(X_train[f2].min(), X_train[f2].max(), 60)
+f1_range = np.linspace(X_train[f1].min(), X_train[f1].max(), 80)
+f2_range = np.linspace(X_train[f2].min(), X_train[f2].max(), 80)
 F1, F2 = np.meshgrid(f1_range, f2_range)
 
 grid = pd.DataFrame({f1: F1.ravel(), f2: F2.ravel()})
 for colname in scaler_features:
     if colname not in [f1, f2]:
-        grid[colname] = 100.0 if colname == "H1" else X_mean.get(colname, 0.0)
+        grid[colname] = X_mean.get(colname, 0.0)
 
 grid = grid.reindex(columns=scaler_features, fill_value=0.0)
 grid_scaled = x_scaler.transform(grid.astype(np.float32))
@@ -133,29 +130,14 @@ preds = y_scaler.inverse_transform(preds_scaled)[:, output_index]
 preds = preds.reshape(F1.shape)
 
 # -----------------------
-# 8️⃣ Check Gap Coverage (Validation)
-# -----------------------
-try:
-    nn = NearestNeighbors(n_neighbors=1).fit(X_train[[f1, f2]])
-    distances, _ = nn.kneighbors(grid[[f1, f2]])
-    avg_gap = np.mean(distances)
-    st.sidebar.markdown("---")
-    st.sidebar.markdown(f"**🧮 Avg Gap Distance:** `{avg_gap:.3f}`")
-    if avg_gap < (0.1 * (X_train[f1].max() - X_train[f1].min())):
-        st.sidebar.success("✅ Synthetic data fills gaps effectively.")
-    else:
-        st.sidebar.warning("⚠️ Sparse regions may still exist.")
-except Exception as e:
-    st.sidebar.warning(f"Gap coverage check skipped: {e}")
-
-# -----------------------
-# 9️⃣ Interactive Plotly Contour + Donuts
+# 8️⃣ Classic RSM Contour (with Plotly)
 # -----------------------
 col1, col2 = st.columns([2, 1])
 
 with col1:
-    st.subheader(f"📈 Interactive RSM Contour: {f1} vs {f2}")
+    st.subheader(f"📈 Classic RSM Contour: {f1} vs {f2}")
 
+    # Hover text for contour
     hover_text = [
         f"<b>{f1}</b>: {x:.3f}<br>"
         f"<b>{f2}</b>: {y:.3f}<br>"
@@ -163,22 +145,24 @@ with col1:
         for x, y, z in zip(grid[f1], grid[f2], preds.flatten())
     ]
 
+    # Smooth RSM-style filled contour
     fig = go.Figure(data=go.Contour(
         z=preds,
         x=f1_range,
         y=f2_range,
-        colorscale="RdYlGn_r",
-        colorbar=dict(title=f"{output_to_plot}"),
+        colorscale="RdYlGn_r",          # RSM-like color scheme
+        colorbar=dict(title=f"{output_to_plot}", ticks="outside"),
         contours=dict(
             coloring="fill",
+            showlines=True,
             showlabels=True,
-            labelfont=dict(size=12, color="black")
+            labelfont=dict(size=11, color="black")
         ),
         hoverinfo="text",
         text=hover_text
     ))
 
-    # Overlay synthetic/test points
+    # Overlay test/synthetic points
     fig.add_trace(go.Scatter(
         x=X_test[f1],
         y=X_test[f2],
@@ -187,7 +171,7 @@ with col1:
         name="Synthetic/Test Points"
     ))
 
-    # Overlay training data
+    # Overlay training data points
     if f1 in X_train.columns and f2 in X_train.columns:
         fig.add_trace(go.Scatter(
             x=X_train[f1],
@@ -195,11 +179,11 @@ with col1:
             mode="markers",
             marker=dict(size=6, color="white", line=dict(width=1, color="black")),
             name="Original Training Data",
-            opacity=0.7
+            opacity=0.8
         ))
 
     fig.update_layout(
-        title=f"{output_to_plot} — RSM Surface (ANN Predictions)",
+        title=f"{output_to_plot} — ANN Predicted RSM Surface",
         xaxis_title=f1,
         yaxis_title=f2,
         width=850,
@@ -209,44 +193,31 @@ with col1:
 
     st.plotly_chart(fig, use_container_width=True)
 
-# ---- Right Column: Donut Charts ----
+# -----------------------
+# 9️⃣ Error Metrics Donut Charts
+# -----------------------
 with col2:
     st.subheader("📊 Error Performance Summary")
 
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        fig_mape = go.Figure(data=[
-            go.Pie(labels=['MAPE (%)', 'Accuracy (%)'],
-                   values=[global_mape, 100 - global_mape],
-                   hole=0.6, marker_colors=['#EF553B', '#00CC96'],
-                   textinfo='label+percent')
-        ])
-        fig_mape.update_layout(title=dict(text=f"Global MAPE: {global_mape:.2f}%", x=0.5),
-                               showlegend=False, height=250)
-        st.plotly_chart(fig_mape, use_container_width=True)
+    fig_mape = go.Figure(data=[
+        go.Pie(labels=['MAPE (%)', 'Accuracy (%)'],
+               values=[global_mape, 100 - global_mape],
+               hole=0.6, marker_colors=['#EF553B', '#00CC96'],
+               textinfo='label+percent')
+    ])
+    fig_mape.update_layout(title=dict(text=f"Global MAPE: {global_mape:.2f}%", x=0.5),
+                           showlegend=False, height=280)
+    st.plotly_chart(fig_mape, use_container_width=True)
 
-    with c2:
-        fig_avg = go.Figure(data=[
-            go.Pie(labels=['Avg Error (%)', 'Accuracy (%)'],
-                   values=[avg_error, 100 - avg_error],
-                   hole=0.6, marker_colors=['#636EFA', '#AB63FA'],
-                   textinfo='label+percent')
-        ])
-        fig_avg.update_layout(title=dict(text=f"Avg Error: {avg_error:.2f}%", x=0.5),
-                              showlegend=False, height=250)
-        st.plotly_chart(fig_avg, use_container_width=True)
-
-    with c3:
-        fig_local = go.Figure(data=[
-            go.Pie(labels=['Local MAPE (%)', 'Accuracy (%)'],
-                   values=[local_mape if not np.isnan(local_mape) else 0,
-                           100 - local_mape if not np.isnan(local_mape) else 100],
-                   hole=0.6, marker_colors=['#FFA15A', '#19D3F3'],
-                   textinfo='label+percent')
-        ])
-        fig_local.update_layout(title=dict(text=f"Local MAPE: {local_mape:.2f}%", x=0.5),
-                                showlegend=False, height=250)
-        st.plotly_chart(fig_local, use_container_width=True)
+    fig_avg = go.Figure(data=[
+        go.Pie(labels=['Avg Error (%)', 'Accuracy (%)'],
+               values=[avg_error, 100 - avg_error],
+               hole=0.6, marker_colors=['#636EFA', '#AB63FA'],
+               textinfo='label+percent')
+    ])
+    fig_avg.update_layout(title=dict(text=f"Avg Error: {avg_error:.2f}%", x=0.5),
+                          showlegend=False, height=280)
+    st.plotly_chart(fig_avg, use_container_width=True)
 
 # -----------------------
 # 🔟 Sample Predictions Table
