@@ -1,233 +1,85 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-import os
-import numpy as np
-import pandas as pd
+# rsm_app.py
 import streamlit as st
-import plotly.graph_objects as go
-import tensorflow as tf
-import joblib
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.interpolate import griddata
 
-# -----------------------
-# 1️⃣ Setup
-# -----------------------
-st.set_page_config(page_title="RSM Contour App", layout="wide")
-st.title("🎛️ Response Surface Modeling (RSM) — ANN-based Contour Visualization")
+# ----------------------------
+# 1️⃣ Page setup
+# ----------------------------
+st.set_page_config(page_title="RSM Visualization", layout="wide")
+st.title("🌀 Response Surface Modeling (RSM) Visualization")
+st.markdown("""
+Select any two input features for the X–Y axes and one output feature to visualize as the response surface.
+This plot helps you explore how the ANN-predicted outputs vary across combinations of your inputs.
+""")
 
-BASE_DIR = r"C:\Users\gantrav01\RD_predictability_11925"
+# ----------------------------
+# 2️⃣ Load synthetic dataset
+# ----------------------------
+uploaded_file = st.file_uploader("📂 Upload your synthetic dataset (Excel or CSV)", type=["xlsx", "csv"])
 
-TRAIN_X_PATH = os.path.join(BASE_DIR, "H_vs_Tau_training.xlsx")
-TRAIN_Y_PATH = os.path.join(BASE_DIR, "H_vs_Tau_target.xlsx")
-TEST_PATH = os.path.join(BASE_DIR, "Copy of T33_100_Samples_for_testing.xlsx")
-MODEL_PATH = os.path.join(BASE_DIR, "checkpoints", "h_vs_tau_best_model.keras")
-X_SCALER_PATH = os.path.join(BASE_DIR, "x_eta_scaler.pkl")
-Y_SCALER_PATH = os.path.join(BASE_DIR, "y_eta_scaler.pkl")
+if uploaded_file is not None:
+    if uploaded_file.name.endswith(".xlsx"):
+        df = pd.read_excel(uploaded_file)
+    else:
+        df = pd.read_csv(uploaded_file)
+        
+    st.success(f"✅ Dataset loaded successfully! Shape: {df.shape}")
+    st.write(df.head())
 
-# -----------------------
-# 2️⃣ Load Data
-# -----------------------
-X_train = pd.read_excel(TRAIN_X_PATH)
-y_train = pd.read_excel(TRAIN_Y_PATH)
-t33_df = pd.read_excel(TEST_PATH)
+    # ----------------------------
+    # 3️⃣ Sidebar - column selectors
+    # ----------------------------
+    st.sidebar.header("🔧 Choose Features")
+    input_cols = [c for c in df.columns if not c.startswith('e')]  # assuming inputs are not prefixed with 'e'
+    output_cols = [c for c in df.columns if c.startswith('e')]     # outputs: e1, e3–e12
 
-feature_cols = [c for c in X_train.columns if c in t33_df.columns]
-X_test = t33_df[feature_cols]
-target_cols = [c for c in y_train.columns if c in t33_df.columns]
-y_actual_df = t33_df[target_cols] if target_cols else pd.DataFrame()
+    x_col = st.sidebar.selectbox("Select X-axis feature", input_cols, index=0)
+    y_col = st.sidebar.selectbox("Select Y-axis feature", input_cols, index=1)
+    z_col = st.sidebar.selectbox("Select output feature (Z)", output_cols, index=0)
 
-if "H1" in X_test.columns:
-    X_test["H1"] = 100.0
+    n_grid = st.sidebar.slider("Grid resolution", 20, 100, 50)
 
-# -----------------------
-# 3️⃣ Load Model & Scalers
-# -----------------------
-try:
-    model = tf.keras.models.load_model(MODEL_PATH, compile=False)
-    st.success("✅ Model loaded successfully.")
-except Exception as e:
-    st.error(f"❌ Could not load model: {e}")
-    st.stop()
+    # ----------------------------
+    # 4️⃣ Prepare data for contour
+    # ----------------------------
+    X = df[x_col].values
+    Y = df[y_col].values
+    Z = df[z_col].values
 
-try:
-    x_scaler = joblib.load(X_SCALER_PATH)
-    y_scaler = joblib.load(Y_SCALER_PATH)
-    st.info("✅ Scalers loaded successfully.")
-except Exception as e:
-    st.error(f"❌ Error loading scalers: {e}")
-    st.stop()
+    # Create smooth grid
+    xi = np.linspace(X.min(), X.max(), n_grid)
+    yi = np.linspace(Y.min(), Y.max(), n_grid)
+    XI, YI = np.meshgrid(xi, yi)
 
-# -----------------------
-# 4️⃣ Align features
-# -----------------------
-if hasattr(x_scaler, "feature_names_in_"):
-    scaler_features = list(x_scaler.feature_names_in_)
-else:
-    scaler_features = list(X_train.columns)
+    # Interpolate Z values on grid
+    ZI = griddata((X, Y), Z, (XI, YI), method='cubic')
 
-X_mean = X_test.mean(numeric_only=True)
-missing_in_test = [c for c in scaler_features if c not in X_test.columns]
-for col in missing_in_test:
-    X_test[col] = X_mean.mean() if col != "H1" else 100.0
+    # ----------------------------
+    # 5️⃣ Plot contour like example image
+    # ----------------------------
+    fig, ax = plt.subplots(figsize=(8, 6))
+    contour = ax.contourf(XI, YI, ZI, levels=20, cmap='RdYlGn_r')  # red-high, green-low like example
+    plt.colorbar(contour, ax=ax, label=z_col)
+    ax.set_xlabel(x_col, fontsize=12)
+    ax.set_ylabel(y_col, fontsize=12)
+    ax.set_title(f"Response Surface: {z_col} vs {x_col} & {y_col}", fontsize=14)
+    st.pyplot(fig)
 
-X_test = X_test.reindex(columns=scaler_features, fill_value=0.0)
-
-# -----------------------
-# 5️⃣ Sidebar Controls
-# -----------------------
-st.sidebar.header("⚙️ RSM Visualization Controls")
-feature_x = st.sidebar.selectbox("Select Feature X", [""] + scaler_features)
-feature_y = st.sidebar.selectbox("Select Feature Y", [""] + scaler_features)
-target_option = st.sidebar.selectbox("Select Target Output", [""] + list(y_train.columns))
-
-if not feature_x or not feature_y or feature_x == feature_y:
-    st.warning("Please select two distinct features for X and Y.")
-    st.stop()
-if not target_option:
-    st.warning("Please select a target output.")
-    st.stop()
-
-output_to_plot = target_option
-output_index = y_train.columns.get_loc(output_to_plot)
-
-# -----------------------
-# 6️⃣ Predict Test Data
-# -----------------------
-X_test_scaled = x_scaler.transform(X_test.astype(np.float32))
-y_pred_scaled = model.predict(X_test_scaled, verbose=0)
-y_pred = y_scaler.inverse_transform(y_pred_scaled)
-
-if output_to_plot in y_actual_df.columns:
-    y_actual = y_actual_df[output_to_plot].values
-    eps = 1e-8
-    abs_errors = np.abs(y_actual - y_pred[:, output_index])
-    percent_errors = abs_errors / (y_actual + eps) * 100
-    global_mape = np.mean(percent_errors)
-    avg_error = np.mean(percent_errors)
-else:
-    y_actual = np.zeros_like(y_pred[:, output_index])
-    st.warning(f"⚠️ No actual values for {output_to_plot} found — skipping MAPE check.")
-    global_mape = avg_error = np.nan
-    percent_errors = np.zeros_like(y_pred[:, output_index])
-
-# -----------------------
-# 7️⃣ Generate RSM Grid Data
-# -----------------------
-f1, f2 = feature_x, feature_y
-f1_range = np.linspace(X_train[f1].min(), X_train[f1].max(), 80)
-f2_range = np.linspace(X_train[f2].min(), X_train[f2].max(), 80)
-F1, F2 = np.meshgrid(f1_range, f2_range)
-
-grid = pd.DataFrame({f1: F1.ravel(), f2: F2.ravel()})
-for colname in scaler_features:
-    if colname not in [f1, f2]:
-        grid[colname] = X_mean.get(colname, 0.0)
-
-grid = grid.reindex(columns=scaler_features, fill_value=0.0)
-grid_scaled = x_scaler.transform(grid.astype(np.float32))
-preds_scaled = model.predict(grid_scaled, verbose=0)
-preds = y_scaler.inverse_transform(preds_scaled)[:, output_index]
-preds = preds.reshape(F1.shape)
-
-# -----------------------
-# 8️⃣ Classic RSM Contour (with Plotly)
-# -----------------------
-col1, col2 = st.columns([2, 1])
-
-with col1:
-    st.subheader(f"📈 Classic RSM Contour: {f1} vs {f2}")
-
-    # Hover text for contour
-    hover_text = [
-        f"<b>{f1}</b>: {x:.3f}<br>"
-        f"<b>{f2}</b>: {y:.3f}<br>"
-        f"<b>Predicted {output_to_plot}</b>: {z:.3f}"
-        for x, y, z in zip(grid[f1], grid[f2], preds.flatten())
-    ]
-
-    # Smooth RSM-style filled contour
-    fig = go.Figure(data=go.Contour(
-        z=preds,
-        x=f1_range,
-        y=f2_range,
-        colorscale="RdYlGn_r",          # RSM-like color scheme
-        colorbar=dict(title=f"{output_to_plot}", ticks="outside"),
-        contours=dict(
-            coloring="fill",
-            showlines=True,
-            showlabels=True,
-            labelfont=dict(size=11, color="black")
-        ),
-        hoverinfo="text",
-        text=hover_text
-    ))
-
-    # Overlay test/synthetic points
-    fig.add_trace(go.Scatter(
-        x=X_test[f1],
-        y=X_test[f2],
-        mode="markers",
-        marker=dict(size=7, color="black", symbol="x"),
-        name="Synthetic/Test Points"
-    ))
-
-    # Overlay training data points
-    if f1 in X_train.columns and f2 in X_train.columns:
-        fig.add_trace(go.Scatter(
-            x=X_train[f1],
-            y=X_train[f2],
-            mode="markers",
-            marker=dict(size=6, color="white", line=dict(width=1, color="black")),
-            name="Original Training Data",
-            opacity=0.8
-        ))
-
-    fig.update_layout(
-        title=f"{output_to_plot} — ANN Predicted RSM Surface",
-        xaxis_title=f1,
-        yaxis_title=f2,
-        width=850,
-        height=600,
-        template="plotly_white"
+    # ----------------------------
+    # 6️⃣ Optional Data download
+    # ----------------------------
+    st.sidebar.markdown("### 💾 Download Filtered Data")
+    filtered_df = df[[x_col, y_col, z_col]]
+    csv = filtered_df.to_csv(index=False).encode('utf-8')
+    st.sidebar.download_button(
+        label="Download X–Y–Z Data (CSV)",
+        data=csv,
+        file_name=f"RSM_{x_col}_{y_col}_{z_col}.csv",
+        mime='text/csv'
     )
 
-    st.plotly_chart(fig, use_container_width=True)
-
-# -----------------------
-# 9️⃣ Error Metrics Donut Charts
-# -----------------------
-with col2:
-    st.subheader("📊 Error Performance Summary")
-
-    fig_mape = go.Figure(data=[
-        go.Pie(labels=['MAPE (%)', 'Accuracy (%)'],
-               values=[global_mape, 100 - global_mape],
-               hole=0.6, marker_colors=['#EF553B', '#00CC96'],
-               textinfo='label+percent')
-    ])
-    fig_mape.update_layout(title=dict(text=f"Global MAPE: {global_mape:.2f}%", x=0.5),
-                           showlegend=False, height=280)
-    st.plotly_chart(fig_mape, use_container_width=True)
-
-    fig_avg = go.Figure(data=[
-        go.Pie(labels=['Avg Error (%)', 'Accuracy (%)'],
-               values=[avg_error, 100 - avg_error],
-               hole=0.6, marker_colors=['#636EFA', '#AB63FA'],
-               textinfo='label+percent')
-    ])
-    fig_avg.update_layout(title=dict(text=f"Avg Error: {avg_error:.2f}%", x=0.5),
-                          showlegend=False, height=280)
-    st.plotly_chart(fig_avg, use_container_width=True)
-
-# -----------------------
-# 🔟 Sample Predictions Table
-# -----------------------
-st.markdown(f"### 🔍 Sample Predictions for `{output_to_plot}` (first 10 rows)")
-compare_df = pd.DataFrame({
-    f1: X_test[f1].values[:10],
-    f2: X_test[f2].values[:10],
-    f"Pred_{output_to_plot}": y_pred[:10, output_index],
-})
-if np.any(y_actual):
-    compare_df[f"Actual_{output_to_plot}"] = y_actual[:10]
-st.dataframe(compare_df, use_container_width=True)
+else:
+    st.info("👆 Upload your synthetic dataset (the one with ANN predictions) to begin.")
