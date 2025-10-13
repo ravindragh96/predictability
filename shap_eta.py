@@ -250,61 +250,90 @@ if np.any(y_actual):
 st.dataframe(compare_df, use_container_width=True)
 
 # -----------------------
-# 11️⃣ Actual vs Predicted Line Graph + Error Zones
+# 11️⃣ Feature vs Target Line Chart with Error Labels (like Flow Coefficient vs Tau)
 # -----------------------
 if output_to_plot in y_actual_df.columns:
-    st.markdown(f"### 📊 Actual vs Predicted — `{output_to_plot}` with Error%")
+    st.markdown(f"### 📈 {f1} vs {output_to_plot} — Error at Each Stage")
 
+    # Prepare data for plotting
     plot_df = pd.DataFrame({
-        "Index": np.arange(1, len(y_actual) + 1),
+        f1: X_test[f1].values,
         f"Actual_{output_to_plot}": y_actual,
         f"Predicted_{output_to_plot}": y_pred[:, output_index],
         "Error_%": percent_errors
-    })
+    }).sort_values(by=f1).reset_index(drop=True)
 
-    fig_line = go.Figure()
+    # Create line chart
+    fig_feature = go.Figure()
 
-    # Shaded region for high-error areas (>5%)
-    high_error_mask = plot_df["Error_%"] > 5
-    if high_error_mask.any():
-        fig_line.add_vrect(
-            x0=plot_df["Index"][high_error_mask].min(),
-            x1=plot_df["Index"][high_error_mask].max(),
-            fillcolor="rgba(255,0,0,0.1)",
-            layer="below",
-            line_width=0,
-            annotation_text="High Error Zone",
-            annotation_position="top left"
+    # Actual Line
+    fig_feature.add_trace(go.Scatter(
+        x=plot_df[f1],
+        y=plot_df[f"Actual_{output_to_plot}"],
+        mode="lines+markers",
+        name="Ground Truth",
+        line=dict(color="blue", width=3),
+        marker=dict(size=8, color="blue"),
+        hovertemplate=f"<b>{f1}</b>: %{{x:.3f}}<br><b>Actual:</b> %{{y:.3f}}<extra></extra>"
+    ))
+
+    # Predicted Line
+    fig_feature.add_trace(go.Scatter(
+        x=plot_df[f1],
+        y=plot_df[f"Predicted_{output_to_plot}"],
+        mode="lines+markers",
+        name="Prediction",
+        line=dict(color="orange", width=3, dash="dot"),
+        marker=dict(size=8, color="orange"),
+        hovertemplate=f"<b>{f1}</b>: %{{x:.3f}}<br><b>Predicted:</b> %{{y:.3f}}<extra></extra>"
+    ))
+
+    # Add Error Annotations for Each Point
+    for i in range(len(plot_df)):
+        fig_feature.add_annotation(
+            x=plot_df[f1].iloc[i],
+            y=(plot_df[f"Actual_{output_to_plot}"].iloc[i] + plot_df[f"Predicted_{output_to_plot}"].iloc[i]) / 2,
+            text=f"{plot_df['Error_%'].iloc[i]:.2f}%",
+            showarrow=False,
+            font=dict(size=10, color="red"),
+            yshift=10
         )
 
-    # Actual vs Predicted lines
-    fig_line.add_trace(go.Scatter(x=plot_df["Index"], y=plot_df[f"Actual_{output_to_plot}"],
-                                  mode="lines+markers", name="Actual",
-                                  line=dict(color="green", width=2)))
-    fig_line.add_trace(go.Scatter(x=plot_df["Index"], y=plot_df[f"Predicted_{output_to_plot}"],
-                                  mode="lines+markers", name="Predicted",
-                                  line=dict(color="blue", width=2, dash="dash")))
-
-    # Error line (secondary axis)
-    fig_line.add_trace(go.Scatter(x=plot_df["Index"], y=plot_df["Error_%"],
-                                  mode="lines+markers", name="Error (%)",
-                                  line=dict(color="red", width=2, dash="dot"),
-                                  yaxis="y2"))
-
-    fig_line.update_layout(
-        title=f"Actual vs Predicted {output_to_plot} with Error %",
-        xaxis_title="Test Sample Index",
-        yaxis=dict(title=f"{output_to_plot} (Actual & Predicted)"),
-        yaxis2=dict(title="Error %", overlaying="y", side="right"),
-        legend=dict(x=0, y=1.1, orientation="h"),
-        height=500,
-        template="plotly_white",
-        hovermode="x unified"
+    # Add Overall Avg Error Text Box
+    overall_avg_error = np.mean(plot_df["Error_%"])
+    fig_feature.add_annotation(
+        x=0.5, y=0.5,
+        xref="paper", yref="paper",
+        text=f"<b>Overall Avg Error: {overall_avg_error:.2f}%</b>",
+        showarrow=False,
+        font=dict(size=14, color="black"),
+        align="center",
+        bgcolor="white",
+        bordercolor="black",
+        borderwidth=1,
+        borderpad=4
     )
 
-    st.plotly_chart(fig_line, use_container_width=True)
+    # Layout Styling
+    fig_feature.update_layout(
+        title=f"{output_to_plot} vs {f1} (Error at Each Stage)",
+        xaxis_title=f1,
+        yaxis_title=f"{output_to_plot}",
+        template="plotly_white",
+        legend=dict(x=0.02, y=0.98, orientation="h"),
+        height=600,
+        hovermode="x unified",
+        font=dict(size=13)
+    )
 
+    st.plotly_chart(fig_feature, use_container_width=True)
+
+    # Show numeric stats below chart
     st.markdown("---")
-    st.markdown(f"**📉 Average Error %:** `{avg_error:.2f}`")
-    st.markdown(f"**📈 Max Error %:** `{max_error:.2f}`")
-    st.markdown(f"**📊 Min Error %:** `{min_error:.2f}`")
+    st.markdown(f"**🔹 Overall Average Error:** `{overall_avg_error:.2f}%`")
+    st.markdown(f"**🔹 Max Error:** `{plot_df['Error_%'].max():.2f}%`")
+    st.markdown(f"**🔹 Min Error:** `{plot_df['Error_%'].min():.2f}%`")
+
+else:
+    st.warning("⚠️ No actual values available for comparison.")
+
