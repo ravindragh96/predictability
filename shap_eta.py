@@ -356,3 +356,120 @@ else:
     st.warning("⚠️ No actual values available for comparison.")
 
 
+# -----------------------
+# 11️⃣ Scatter Comparison of Actual vs Predicted T1 Across f1 & f2 (Fixed for Actual Values)
+# -----------------------
+st.markdown(f"### 📊 {output_to_plot} Comparison Across {f1} and {f2}")
+
+# Check if actual values exist in test dataset
+if output_to_plot in y_actual_df.columns:
+    actual_values = y_actual_df[output_to_plot].values
+else:
+    st.warning(f"⚠️ No '{output_to_plot}' column found in test data — using scaled dummy zeros for visualization.")
+    actual_values = np.zeros_like(y_pred[:, output_index])
+
+# Prepare combined dataframe
+plot_df = pd.DataFrame({
+    f1: X_test[f1].values,
+    f2: X_test[f2].values,
+    f"Actual_{output_to_plot}": actual_values,
+    f"Predicted_{output_to_plot}": y_pred[:, output_index],
+})
+
+# Compute error %
+eps = 1e-8
+plot_df["Error_%"] = np.abs(plot_df[f"Actual_{output_to_plot}"] - plot_df[f"Predicted_{output_to_plot}"]) / (
+    np.abs(plot_df[f"Actual_{output_to_plot}"]) + eps
+) * 100
+
+# -----------------------
+# Build Scatter Plot
+# -----------------------
+fig_scatter = go.Figure()
+
+# Actual Layer
+fig_scatter.add_trace(go.Scatter(
+    x=plot_df[f1],
+    y=plot_df[f2],
+    mode="markers",
+    name=f"Actual {output_to_plot}",
+    marker=dict(
+        size=10,
+        color=plot_df[f"Actual_{output_to_plot}"],
+        colorscale="Blues",
+        colorbar=dict(title=f"Actual {output_to_plot}"),
+        symbol="circle",
+        line=dict(width=1, color="black"),
+        showscale=True
+    ),
+    text=[
+        f"<b>{f1}</b>: {row[f1]:.3f}<br>"
+        f"<b>{f2}</b>: {row[f2]:.3f}<br>"
+        f"<b>Actual {output_to_plot}:</b> {row[f'Actual_{output_to_plot}']:.3f}"
+        for _, row in plot_df.iterrows()
+    ],
+    hoverinfo="text"
+))
+
+# Predicted Layer
+fig_scatter.add_trace(go.Scatter(
+    x=plot_df[f1],
+    y=plot_df[f2],
+    mode="markers",
+    name=f"Predicted {output_to_plot}",
+    marker=dict(
+        size=10,
+        color=plot_df[f"Predicted_{output_to_plot}"],
+        colorscale="Oranges",
+        colorbar=dict(title=f"Predicted {output_to_plot}"),
+        symbol="diamond",
+        line=dict(width=1, color="black"),
+        showscale=True
+    ),
+    text=[
+        f"<b>{f1}</b>: {row[f1]:.3f}<br>"
+        f"<b>{f2}</b>: {row[f2]:.3f}<br>"
+        f"<b>Actual {output_to_plot}:</b> {row[f'Actual_{output_to_plot}']:.3f}<br>"
+        f"<b>Predicted {output_to_plot}:</b> {row[f'Predicted_{output_to_plot}']:.3f}<br>"
+        f"<b>Error %:</b> {row['Error_%']:.2f}%"
+        for _, row in plot_df.iterrows()
+    ],
+    hoverinfo="text"
+))
+
+# Layout
+fig_scatter.update_layout(
+    title=f"{output_to_plot} — Actual vs Predicted Distribution",
+    xaxis_title=f1,
+    yaxis_title=f2,
+    template="plotly_white",
+    legend=dict(x=0, y=1.1, orientation="h"),
+    height=750,
+    hovermode="closest",
+    font=dict(size=13)
+)
+
+# Add overall error annotation
+overall_avg_error = np.mean(plot_df["Error_%"])
+fig_scatter.add_annotation(
+    x=0.5, y=1.07,
+    xref="paper", yref="paper",
+    text=f"<b>Overall Avg Error: {overall_avg_error:.2f}%</b>",
+    showarrow=False,
+    font=dict(size=14, color="black"),
+    bgcolor="white",
+    bordercolor="black",
+    borderwidth=1,
+    borderpad=4
+)
+
+st.plotly_chart(fig_scatter, use_container_width=True)
+
+# Summary
+st.markdown("---")
+st.markdown(f"**📉 Average Error %:** `{overall_avg_error:.2f}`")
+st.markdown(f"**📈 Max Error %:** `{plot_df['Error_%'].max():.2f}`")
+st.markdown(f"**📊 Min Error %:** `{plot_df['Error_%'].min():.2f}`")
+
+
+
