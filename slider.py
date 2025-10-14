@@ -5,6 +5,292 @@ import os
 import numpy as np
 import pandas as pd
 import streamlit as st
+import plotly.express as px
+import plotly.graph_objects as go
+from scipy.spatial import cKDTree
+import joblib
+import tensorflow as tf
+
+# -----------------------
+# Setup
+# -----------------------
+st.set_page_config(page_title="RSM Validation App", layout="wide")
+st.title("🎛️ RSM — Synthetic Data Validation (with Separate Scatter Plots)")
+
+BASE_DIR = r"C:\Users\gantrav01\RD_predictability_11925"
+
+TRAIN_X_PATH = os.path.join(BASE_DIR, "H_vs_Tau_training.xlsx")
+TRAIN_Y_PATH = os.path.join(BASE_DIR, "H_vs_Tau_target.xlsx")
+REAL_PATH = os.path.join(BASE_DIR, "Copy of T33_100_Samples_for_testing.xlsx")
+SYNTH_PATH = os.path.join(BASE_DIR, "synthetic_tau_98.xlsx")
+MODEL_PATH = os.path.join(BASE_DIR, "checkpoints", "h_vs_tau_best_model.keras")
+X_SCALER_PATH = os.path.join(BASE_DIR, "x_eta_scaler.pkl")
+Y_SCALER_PATH = os.path.join(BASE_DIR, "y_eta_scaler.pkl")
+
+# -----------------------
+# Load Data
+# -----------------------
+try:
+    X_train = pd.read_excel(TRAIN_X_PATH)
+    y_train = pd.read_excel(TRAIN_Y_PATH)
+    real_df = pd.read_excel(REAL_PATH)
+    synth_df = pd.read_excel(SYNTH_PATH)
+    st.sidebar.success("✅ Data loaded.")
+except Exception as e:
+    st.sidebar.error(f"Error loading files: {e}")
+    st.stop()
+
+st.sidebar.markdown("### 📂 Data Overview")
+st.sidebar.write(f"Real Data Samples: {len(real_df)}")
+st.sidebar.write(f"Synthetic Data Samples: {len(synth_df)}")
+
+# -----------------------
+# Load Model & Scalers (optional, not used directly here but kept for compatibility)
+# -----------------------
+try:
+    model = tf.keras.models.load_model(MODEL_PATH, compile=False)
+    x_scaler = joblib.load(X_SCALER_PATH)
+    y_scaler = joblib.load(Y_SCALER_PATH)
+    st.sidebar.info("✅ Model & scalers loaded.")
+except Exception:
+    st.sidebar.info("Model or scalers not loaded (not required for visualization).")
+
+# -----------------------
+# Sidebar Controls
+# -----------------------
+scaler_features = list(X_train.columns)
+target_features = list(y_train.columns)
+
+st.sidebar.header("⚙️ Controls")
+feature_x = st.sidebar.selectbox("Select Feature X", [""] + scaler_features)
+feature_y = st.sidebar.selectbox("Select Feature Y", [""] + scaler_features)
+target_option = st.sidebar.selectbox("Select Target Output", [""] + target_features)
+
+if not feature_x or not feature_y or feature_x == feature_y:
+    st.warning("Please select two distinct features for X and Y.")
+    st.stop()
+if not target_option:
+    st.warning("Please select a target output.")
+    st.stop()
+
+# -----------------------
+# Synthetic Range Filter (synthetic-only)
+# -----------------------
+x_min, x_max = float(synth_df[feature_x].min()), float(synth_df[feature_x].max())
+y_min, y_max = float(synth_df[feature_y].min()), float(synth_df[feature_y].max())
+
+st.sidebar.markdown("### 🎚️ Synthetic Range Filter")
+x_range = st.sidebar.slider(f"{feature_x} Range", min_value=x_min, max_value=x_max, value=(x_min, x_max))
+y_range = st.sidebar.slider(f"{feature_y} Range", min_value=y_min, max_value=y_max, value=(y_min, y_max))
+
+synth_filtered = synth_df[
+    (synth_df[feature_x] >= x_range[0]) & (synth_df[feature_x] <= x_range[1]) &
+    (synth_df[feature_y] >= y_range[0]) & (synth_df[feature_y] <= y_range[1])
+].reset_index(drop=True)
+
+st.sidebar.write(f"🔹 Filtered Synthetic Samples: {len(synth_filtered)}")
+if len(synth_filtered) == 0:
+    st.warning("No synthetic samples found in this range.")
+    st.stop()
+
+# -----------------------
+# Match Synthetic -> Real (KDTree)
+# -----------------------
+key_features = [feature_x, feature_y]
+
+# Ensure the real_df contains the needed columns
+for c in key_features:
+    if c not in real_df.columns:
+        st.error(f"Real data missing column: {c}")
+        st.stop()
+
+tree = cKDTree(real_df[key_features].values)
+distances, indices = tree.query(synth_filtered[key_features].values, k=1)
+
+matched_real = real_df.iloc[indices].reset_index(drop=True)
+matched_synth = synth_filtered.copy()
+
+# -----------------------
+# Find target column in synth (case-insensitive match)
+# -----------------------
+possible_synth_cols = [c for c in matched_synth.columns if c.lower() == target_option.lower()]
+if possible_synth_cols:
+    target_col_synth = possible_synth_cols[0]
+else:
+    # try substring match (e.g., 't1' vs 'tau1' or 'pred_t1')
+    lower = target_option.lower()
+    possible_synth_cols = [c for c in matched_synth.columns if lower in c.lower() or c.lower() in lower]
+    if possible_synth_cols:
+        target_col_synth = possible_synth_cols[0]
+    else:
+        st.error(f"Target '{target_option}' not found in synthetic data. Available: {list(matched_synth.columns)}")
+        st.stop()
+
+target_col_real = target_option
+
+# -----------------------
+# Compute metrics between matched pairs
+# -----------------------
+y_real = matched_real[target_col_real].values
+y_synth = matched_synth[target_col_synth].values
+
+eps = 1e-8
+mae = np.mean(np.abs(y_real - y_synth))
+rmse = np.sqrt(np.mean((y_real - y_synth) ** 2))
+mape = np.mean(np.abs((y_real - y_synth) / (np.abs(y_real) + eps))) * 100
+
+st.markdown(f"### 📊 Validation Summary for `{target_option}`")
+st.write(f"- Filtered synthetic samples: {len(synth_filtered)}")
+st.write(f"- Matched pairs (all synth points matched to closest real): {len(matched_synth)}")
+st.write(f"- MAE: {mae:.4f}    RMSE: {rmse:.4f}    MAPE: {mape:.2f}%")
+
+# -----------------------
+# Prepare comparison DataFrame
+# -----------------------
+comparison_df = pd.DataFrame({
+    f"{feature_x}_synthetic": matched_synth[feature_x],
+    f"{feature_y}_synthetic": matched_synth[feature_y],
+    f"Synthetic_{target_option}": y_synth,
+    f"Real_{target_option}": y_real,
+    "Distance": distances,
+})
+comparison_df["Abs_Error"] = np.abs(comparison_df[f"Real_{target_option}"] - comparison_df[f"Synthetic_{target_option}"])
+comparison_df["Percent_Error"] = comparison_df["Abs_Error"] / (np.abs(comparison_df[f"Real_{target_option}"]) + eps) * 100
+
+# show top-n
+st.markdown("### 🧾 Matched Synthetic → Real Pairs (first 50 rows)")
+st.dataframe(comparison_df.head(50), use_container_width=True)
+
+# Option to download matched dataframe
+csv_bytes = comparison_df.to_csv(index=False).encode()
+st.download_button("📥 Download matched pairs (CSV)", data=csv_bytes, file_name=f"matched_{target_option}.csv")
+
+# -----------------------
+# Separate scatter plots
+# -----------------------
+st.markdown("## Visualizations")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.subheader("1) Synthetic points (filtered range) — colored by predicted target")
+    fig_syn = px.scatter(
+        synth_filtered,
+        x=feature_x,
+        y=feature_y,
+        color=target_col_synth,
+        labels={feature_x: feature_x, feature_y: feature_y, target_col_synth: f"Synth {target_option}"},
+        title="Synthetic (filtered) — Predicted",
+        height=450,
+    )
+    fig_syn.update_traces(marker=dict(size=6, line=dict(width=0.5, color='black')))
+    st.plotly_chart(fig_syn, use_container_width=True)
+
+with col2:
+    st.subheader("2) Real points — colored by actual target")
+    # Ensure real_df has the target column
+    if target_col_real not in real_df.columns:
+        st.error(f"Real data missing target column: {target_col_real}")
+    else:
+        # filter real_df to same bounding box to make the view comparable
+        real_in_box = real_df[
+            (real_df[feature_x] >= x_range[0]) & (real_df[feature_x] <= x_range[1]) &
+            (real_df[feature_y] >= y_range[0]) & (real_df[feature_y] <= y_range[1])
+        ]
+        fig_real = px.scatter(
+            real_in_box,
+            x=feature_x,
+            y=feature_y,
+            color=target_col_real,
+            labels={feature_x: feature_x, feature_y: feature_y, target_col_real: f"Real {target_option}"},
+            title="Real (in same box) — Actual",
+            height=450,
+        )
+        fig_real.update_traces(marker=dict(size=6, symbol="diamond", line=dict(width=0.5, color='black')))
+        st.plotly_chart(fig_real, use_container_width=True)
+
+# Combined scatter (synthetic + real) side-by-side below
+st.subheader("3) Combined view (Synthetic vs Real) — same axes")
+fig_comb = go.Figure()
+
+# synthetic trace
+fig_comb.add_trace(go.Scatter(
+    x=synth_filtered[feature_x],
+    y=synth_filtered[feature_y],
+    mode='markers',
+    marker=dict(size=7, color='blue', opacity=0.6, symbol='circle'),
+    name='Synthetic',
+    text=[f"Synth {target_option}: {val:.3f}" for val in synth_filtered[target_col_synth]]
+))
+
+# real trace (show only points in same bounding box for visibility)
+fig_comb.add_trace(go.Scatter(
+    x=real_in_box[feature_x],
+    y=real_in_box[feature_y],
+    mode='markers',
+    marker=dict(size=8, color='red', opacity=0.7, symbol='diamond'),
+    name='Real',
+    text=[f"Real {target_option}: {val:.3f}" for val in real_in_box[target_col_real]]
+))
+
+fig_comb.update_layout(title="Combined Synthetic (blue) vs Real (red)", xaxis_title=feature_x, yaxis_title=feature_y, height=600)
+st.plotly_chart(fig_comb, use_container_width=True)
+
+# Predicted vs Actual scatter (matched pairs)
+st.subheader("4) Predicted vs Actual (Matched pairs)")
+fig_pa = px.scatter(
+    comparison_df,
+    x=f"Real_{target_option}",
+    y=f"Synthetic_{target_option}",
+    color="Distance",
+    color_continuous_scale="Viridis",
+    labels={f"Real_{target_option}": "Actual (Real)", f"Synthetic_{target_option}": "Predicted (Synthetic)"},
+    title="Predicted vs Actual (matched synthetic → real)",
+    height=600
+)
+# Add diagonal line
+minv = min(comparison_df[f"Real_{target_option}"].min(), comparison_df[f"Synthetic_{target_option}"].min())
+maxv = max(comparison_df[f"Real_{target_option}"].max(), comparison_df[f"Synthetic_{target_option}"].max())
+fig_pa.add_shape(type="line", x0=minv, y0=minv, x1=maxv, y1=maxv, line=dict(color="red", dash="dash"))
+st.plotly_chart(fig_pa, use_container_width=True)
+
+# Error heatmap (optional): show percent error distribution by synth grid
+st.subheader("5) Error distribution (percent error) across filtered synthetic points")
+fig_err = px.scatter(
+    comparison_df,
+    x=f"{feature_x}_synthetic",
+    y=f"{feature_y}_synthetic",
+    color="Percent_Error",
+    color_continuous_scale="RdYlGn_r",
+    title="Percent Error (Real vs Synthetic) for Matched Pairs",
+    labels={"Percent_Error": "% Error"},
+    height=600
+)
+st.plotly_chart(fig_err, use_container_width=True)
+
+# Summary box
+st.info(f"""
+**Selected Range:**
+- {feature_x}: {x_range[0]:.3f} → {x_range[1]:.3f}
+- {feature_y}: {y_range[0]:.3f} → {y_range[1]:.3f}
+
+**Filtered synthetic samples**: {len(synth_filtered)}  
+**Matched pairs**: {len(comparison_df)}  
+**MAPE**: {mape:.2f}%  |  **RMSE**: {rmse:.4f}
+""") 
+
+
+
+
+≠=============
+
+#!/usr/bin/env python
+# coding: utf-8
+
+import os
+import numpy as np
+import pandas as pd
+import streamlit as st
 import plotly.graph_objects as go
 from scipy.spatial import cKDTree
 import tensorflow as tf
