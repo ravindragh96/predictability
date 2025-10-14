@@ -1,3 +1,222 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+import os
+import numpy as np
+import pandas as pd
+import streamlit as st
+import plotly.graph_objects as go
+from scipy.spatial import cKDTree
+import tensorflow as tf
+import joblib
+
+# -----------------------
+# 1️⃣ Setup
+# -----------------------
+st.set_page_config(page_title="RSM Validation App", layout="wide")
+st.title("🎛️ Response Surface Modeling (RSM) — Synthetic Data Validation")
+
+BASE_DIR = r"C:\Users\gantrav01\RD_predictability_11925"
+
+TRAIN_X_PATH = os.path.join(BASE_DIR, "H_vs_Tau_training.xlsx")
+TRAIN_Y_PATH = os.path.join(BASE_DIR, "H_vs_Tau_target.xlsx")
+REAL_PATH = os.path.join(BASE_DIR, "Copy of T33_100_Samples_for_testing.xlsx")
+SYNTH_PATH = os.path.join(BASE_DIR, "synthetic_tau_98.xlsx")
+MODEL_PATH = os.path.join(BASE_DIR, "checkpoints", "h_vs_tau_best_model.keras")
+X_SCALER_PATH = os.path.join(BASE_DIR, "x_eta_scaler.pkl")
+Y_SCALER_PATH = os.path.join(BASE_DIR, "y_eta_scaler.pkl")
+
+# -----------------------
+# 2️⃣ Load Data
+# -----------------------
+X_train = pd.read_excel(TRAIN_X_PATH)
+y_train = pd.read_excel(TRAIN_Y_PATH)
+real_df = pd.read_excel(REAL_PATH)
+synth_df = pd.read_excel(SYNTH_PATH)
+
+st.sidebar.markdown("### 📂 Data Overview")
+st.sidebar.write(f"Real Data Samples: {len(real_df)}")
+st.sidebar.write(f"Synthetic Data Samples: {len(synth_df)}")
+
+# -----------------------
+# 3️⃣ Load Model & Scalers
+# -----------------------
+try:
+    model = tf.keras.models.load_model(MODEL_PATH, compile=False)
+    st.success("✅ Model loaded successfully.")
+except Exception as e:
+    st.error(f"❌ Could not load model: {e}")
+    st.stop()
+
+try:
+    x_scaler = joblib.load(X_SCALER_PATH)
+    y_scaler = joblib.load(Y_SCALER_PATH)
+    st.info("✅ Scalers loaded successfully.")
+except Exception as e:
+    st.error(f"❌ Error loading scalers: {e}")
+    st.stop()
+
+# -----------------------
+# 4️⃣ Sidebar Controls
+# -----------------------
+scaler_features = list(X_train.columns)
+target_features = list(y_train.columns)
+
+st.sidebar.header("⚙️ RSM Visualization Controls")
+feature_x = st.sidebar.selectbox("Select Feature X", [""] + scaler_features)
+feature_y = st.sidebar.selectbox("Select Feature Y", [""] + scaler_features)
+target_option = st.sidebar.selectbox("Select Target Output", [""] + target_features)
+
+if not feature_x or not feature_y or feature_x == feature_y:
+    st.warning("Please select two distinct features for X and Y.")
+    st.stop()
+if not target_option:
+    st.warning("Please select a target output.")
+    st.stop()
+
+# -----------------------
+# 5️⃣ Dynamic Range Filter (for Synthetic Data)
+# -----------------------
+x_min, x_max = float(synth_df[feature_x].min()), float(synth_df[feature_x].max())
+y_min, y_max = float(synth_df[feature_y].min()), float(synth_df[feature_y].max())
+
+st.sidebar.markdown("### 🎚️ Synthetic Range Filter")
+x_range = st.sidebar.slider(f"{feature_x} Range", min_value=x_min, max_value=x_max, value=(x_min, x_max))
+y_range = st.sidebar.slider(f"{feature_y} Range", min_value=y_min, max_value=y_max, value=(y_min, y_max))
+
+synth_filtered = synth_df[
+    (synth_df[feature_x] >= x_range[0]) & (synth_df[feature_x] <= x_range[1]) &
+    (synth_df[feature_y] >= y_range[0]) & (synth_df[feature_y] <= y_range[1])
+].reset_index(drop=True)
+
+st.sidebar.write(f"🧩 Filtered Synthetic Samples: {len(synth_filtered)}")
+
+if len(synth_filtered) == 0:
+    st.warning("⚠️ No synthetic samples found in this range.")
+    st.stop()
+
+# -----------------------
+# 6️⃣ Match Synthetic ↔ Real Points (using KDTree)
+# -----------------------
+key_features = [feature_x, feature_y]
+tree = cKDTree(real_df[key_features].values)
+distances, indices = tree.query(synth_filtered[key_features].values, k=1)
+
+matched_real = real_df.iloc[indices].reset_index(drop=True)
+matched_synth = synth_filtered.copy()
+
+# -----------------------
+# 7️⃣ Find Target Column Safely (Case-Insensitive Match)
+# -----------------------
+target_col_real = target_option
+possible_synth_cols = [c for c in matched_synth.columns if c.lower() == target_option.lower()]
+
+if possible_synth_cols:
+    target_col_synth = possible_synth_cols[0]
+else:
+    st.error(f"⚠️ Target column '{target_option}' not found in synthetic data. "
+             f"Available synthetic columns: {list(matched_synth.columns)}")
+    st.stop()
+
+st.write(f"✅ Using Real Target: {target_col_real}")
+st.write(f"✅ Using Synthetic Target: {target_col_synth}")
+
+# -----------------------
+# 8️⃣ Compute Errors Between Real and Synthetic Targets
+# -----------------------
+y_real = matched_real[target_col_real].values
+y_synth = matched_synth[target_col_synth].values
+
+eps = 1e-8
+mae = np.mean(np.abs(y_real - y_synth))
+rmse = np.sqrt(np.mean((y_real - y_synth) ** 2))
+mape = np.mean(np.abs((y_real - y_synth) / (y_real + eps))) * 100
+
+st.markdown(f"""
+### 📊 Validation Summary for `{target_option}`
+| Metric | Value |
+|--------|--------|
+| **Filtered Synthetic Samples** | `{len(synth_filtered)}` |
+| **MAE** | `{mae:.4f}` |
+| **RMSE** | `{rmse:.4f}` |
+| **MAPE** | `{mape:.2f}%` |
+""")
+
+# -----------------------
+# 9️⃣ Display Matched Data
+# -----------------------
+comparison_df = pd.DataFrame({
+    f"{feature_x}_synthetic": matched_synth[feature_x],
+    f"{feature_y}_synthetic": matched_synth[feature_y],
+    f"Synthetic_{target_option}": y_synth,
+    f"Real_{target_option}": y_real,
+    "Distance": distances,
+})
+comparison_df["Abs_Error"] = np.abs(comparison_df[f"Real_{target_option}"] - comparison_df[f"Synthetic_{target_option}"])
+comparison_df["Percent_Error"] = (
+    comparison_df["Abs_Error"] / (np.abs(comparison_df[f"Real_{target_option}"]) + 1e-8) * 100
+)
+
+st.markdown(f"### 🧾 Synthetic–Real Matches Within {feature_x}: {x_range}, {feature_y}: {y_range}")
+st.dataframe(comparison_df.head(25), use_container_width=True)
+
+# -----------------------
+# 🔟 Plot Contour Map (Optional)
+# -----------------------
+fig = go.Figure(data=go.Scatter(
+    x=comparison_df[f"{feature_x}_synthetic"],
+    y=comparison_df[f"{feature_y}_synthetic"],
+    mode="markers",
+    marker=dict(
+        size=8,
+        color=comparison_df[f"Synthetic_{target_option}"],
+        colorscale="Viridis",
+        showscale=True,
+        colorbar=dict(title=f"{target_option} (Predicted)"),
+        line=dict(width=1, color="black")
+    ),
+    text=[
+        f"<b>{feature_x}</b>: {row[f'{feature_x}_synthetic']:.3f}<br>"
+        f"<b>{feature_y}</b>: {row[f'{feature_y}_synthetic']:.3f}<br>"
+        f"<b>Synth {target_option}</b>: {row[f'Synthetic_{target_option}']:.3f}<br>"
+        f"<b>Real {target_option}</b>: {row[f'Real_{target_option}']:.3f}<br>"
+        f"<b>Error %:</b> {row['Percent_Error']:.2f}%"
+        for _, row in comparison_df.iterrows()
+    ],
+    hoverinfo="text",
+    name="Synthetic Points"
+))
+
+fig.update_layout(
+    title=f"🧭 RSM Prediction Contour — {target_option} vs ({feature_x}, {feature_y})",
+    xaxis_title=feature_x,
+    yaxis_title=feature_y,
+    template="plotly_white",
+    height=700,
+    hovermode="closest"
+)
+
+st.plotly_chart(fig, use_container_width=True)
+
+# -----------------------
+# 🔚 Summary Box
+# -----------------------
+st.info(f"""
+**Selected Range:**
+- {feature_x}: {x_range[0]:.2f} → {x_range[1]:.2f}
+- {feature_y}: {y_range[0]:.2f} → {y_range[1]:.2f}
+
+**Matches Found:** {len(comparison_df)}  
+**MAPE:** {mape:.2f}%  
+**RMSE:** {rmse:.4f}
+""")
+
+
+
+
+
+
+
 # -----------------------
 # 4️⃣ Dynamic Range Filter (for Synthetic Data Only)
 # -----------------------
