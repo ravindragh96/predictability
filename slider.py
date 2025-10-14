@@ -1,3 +1,247 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+import os
+import numpy as np
+import pandas as pd
+import streamlit as st
+import plotly.graph_objects as go
+import plotly.express as px
+from scipy.spatial import cKDTree
+import tensorflow as tf
+import joblib
+
+# -----------------------
+# 1️⃣ Setup
+# -----------------------
+st.set_page_config(page_title="Response Surface Modeling (RSM)", layout="wide")
+st.title("🎛️ Response Surface Modeling (RSM) — ANN Predicted Surface & Validation")
+
+BASE_DIR = r"C:\Users\gantrav01\RD_predictability_11925"
+
+TRAIN_X_PATH = os.path.join(BASE_DIR, "H_vs_Tau_training.xlsx")
+TRAIN_Y_PATH = os.path.join(BASE_DIR, "H_vs_Tau_target.xlsx")
+REAL_PATH = os.path.join(BASE_DIR, "Copy of T33_100_Samples_for_testing.xlsx")
+SYNTH_PATH = os.path.join(BASE_DIR, "synthetic_tau_98.xlsx")
+MODEL_PATH = os.path.join(BASE_DIR, "checkpoints", "h_vs_tau_best_model.keras")
+X_SCALER_PATH = os.path.join(BASE_DIR, "x_eta_scaler.pkl")
+Y_SCALER_PATH = os.path.join(BASE_DIR, "y_eta_scaler.pkl")
+
+# -----------------------
+# 2️⃣ Load Data & Model
+# -----------------------
+try:
+    X_train = pd.read_excel(TRAIN_X_PATH)
+    y_train = pd.read_excel(TRAIN_Y_PATH)
+    real_df = pd.read_excel(REAL_PATH)
+    synth_df = pd.read_excel(SYNTH_PATH)
+    st.sidebar.success("✅ Data loaded successfully.")
+except Exception as e:
+    st.sidebar.error(f"❌ Data load failed: {e}")
+    st.stop()
+
+try:
+    model = tf.keras.models.load_model(MODEL_PATH, compile=False)
+    x_scaler = joblib.load(X_SCALER_PATH)
+    y_scaler = joblib.load(Y_SCALER_PATH)
+    st.sidebar.info("✅ Model and scalers loaded successfully.")
+except Exception as e:
+    st.sidebar.error(f"❌ Failed to load model/scalers: {e}")
+    st.stop()
+
+# -----------------------
+# 3️⃣ Sidebar Controls
+# -----------------------
+scaler_features = list(X_train.columns)
+target_features = list(y_train.columns)
+
+st.sidebar.header("⚙️ Visualization Controls")
+feature_x = st.sidebar.selectbox("Select Feature X", [""] + scaler_features)
+feature_y = st.sidebar.selectbox("Select Feature Y", [""] + scaler_features)
+target_option = st.sidebar.selectbox("Select Target Output", [""] + target_features)
+
+if not feature_x or not feature_y or feature_x == feature_y:
+    st.warning("Please select two distinct features for X and Y.")
+    st.stop()
+if not target_option:
+    st.warning("Please select a target output variable.")
+    st.stop()
+
+# -----------------------
+# 4️⃣ Range & Threshold Controls
+# -----------------------
+x_min, x_max = synth_df[feature_x].min(), synth_df[feature_x].max()
+y_min, y_max = synth_df[feature_y].min(), synth_df[feature_y].max()
+
+st.sidebar.markdown("### 🎚️ Filter Range for Synthetic Data")
+x_range = st.sidebar.slider(f"{feature_x} Range", float(x_min), float(x_max), (float(x_min), float(x_max)))
+y_range = st.sidebar.slider(f"{feature_y} Range", float(y_min), float(y_max), (float(y_min), float(y_max)))
+
+st.sidebar.markdown("### 🎯 Matching Threshold")
+threshold_percent = st.sidebar.slider("Tolerance (% of feature range)", 0.5, 10.0, 2.0)
+threshold = ((x_max - x_min) + (y_max - y_min)) / 2 * (threshold_percent / 100)
+
+# -----------------------
+# 5️⃣ Filter & Match Data
+# -----------------------
+synth_filtered = synth_df[
+    (synth_df[feature_x] >= x_range[0]) & (synth_df[feature_x] <= x_range[1]) &
+    (synth_df[feature_y] >= y_range[0]) & (synth_df[feature_y] <= y_range[1])
+].reset_index(drop=True)
+
+if len(synth_filtered) == 0:
+    st.warning("⚠️ No synthetic data points found in selected range.")
+    st.stop()
+
+tree = cKDTree(real_df[[feature_x, feature_y]].values)
+distances, indices = tree.query(synth_filtered[[feature_x, feature_y]].values, k=1)
+valid_mask = distances < threshold
+matched_real = real_df.iloc[indices[valid_mask]].reset_index(drop=True)
+matched_synth = synth_filtered.loc[valid_mask].reset_index(drop=True)
+
+if len(matched_synth) == 0:
+    st.error("⚠️ No matching data points found within threshold range.")
+    st.stop()
+
+# -----------------------
+# 6️⃣ Error Computation
+# -----------------------
+target_col_real = target_option
+possible_synth_cols = [c for c in matched_synth.columns if c.lower() == target_option.lower()]
+target_col_synth = possible_synth_cols[0] if possible_synth_cols else [c for c in matched_synth.columns if target_option.lower() in c.lower()][0]
+
+y_real = matched_real[target_col_real].values
+y_synth = matched_synth[target_col_synth].values
+eps = 1e-8
+abs_error = np.abs(y_real - y_synth)
+percent_error = abs_error / (np.abs(y_real) + eps) * 100
+mape = np.mean(percent_error)
+local_mape = np.mean(percent_error)
+
+# -----------------------
+# 7️⃣ Scatter Visualizations
+# -----------------------
+st.markdown("## 🎨 Scatter Plots")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.subheader("1️⃣ Synthetic Points — Predicted")
+    fig_syn = px.scatter(
+        synth_filtered, x=feature_x, y=feature_y, color=target_col_synth,
+        color_continuous_scale="Viridis", height=450,
+        title=f"Synthetic Data — Predicted {target_option}"
+    )
+    fig_syn.update_traces(marker=dict(size=6, line=dict(width=0.5, color='black')))
+    st.plotly_chart(fig_syn, use_container_width=True)
+
+with col2:
+    st.subheader("2️⃣ Real Points — Actual")
+    fig_real = px.scatter(
+        real_df, x=feature_x, y=feature_y, color=target_col_real,
+        color_continuous_scale="Plasma", height=450,
+        title=f"Real Data — Actual {target_option}"
+    )
+    fig_real.update_traces(marker=dict(size=6, symbol="diamond", line=dict(width=0.5, color='black')))
+    st.plotly_chart(fig_real, use_container_width=True)
+
+# -----------------------
+# 8️⃣ RSM Contour Plot (Academic Style)
+# -----------------------
+st.markdown("## 🌀 Response Surface (Predicted Surface)")
+
+f1_range = np.linspace(synth_filtered[feature_x].min(), synth_filtered[feature_x].max(), 80)
+f2_range = np.linspace(synth_filtered[feature_y].min(), synth_filtered[feature_y].max(), 80)
+F1, F2 = np.meshgrid(f1_range, f2_range)
+
+grid = pd.DataFrame({feature_x: F1.ravel(), feature_y: F2.ravel()})
+X_mean = X_train.mean(numeric_only=True)
+for c in X_train.columns:
+    if c not in [feature_x, feature_y]:
+        grid[c] = X_mean[c]
+
+grid_scaled = x_scaler.transform(grid[X_train.columns])
+preds_scaled = model.predict(grid_scaled, verbose=0)
+preds = y_scaler.inverse_transform(preds_scaled)[:, y_train.columns.get_loc(target_option)]
+preds = preds.reshape(F1.shape)
+
+fig_rsm = go.Figure()
+fig_rsm.add_trace(go.Contour(
+    z=preds, x=f1_range, y=f2_range,
+    colorscale="RdYlGn_r", ncontours=25,
+    colorbar=dict(title=f"{target_option}", titleside="right"),
+    contours=dict(showlabels=True, labelfont=dict(size=12, color="black")),
+    hovertemplate=f"<b>{feature_x}</b>: %{{x:.2f}}<br><b>{feature_y}</b>: %{{y:.2f}}<br><b>Predicted {target_option}</b>: %{{z:.2f}}<extra></extra>"
+))
+fig_rsm.add_trace(go.Scatter(
+    x=synth_filtered[feature_x], y=synth_filtered[feature_y],
+    mode="markers", marker=dict(size=6, color="white", line=dict(width=0.8, color="black")),
+    name="Synthetic Points"
+))
+fig_rsm.update_layout(
+    title=dict(text=f"Response Surface of {target_option} vs {feature_x}, {feature_y}", x=0.45),
+    xaxis_title=feature_x, yaxis_title=feature_y,
+    width=850, height=600, template="plotly_white",
+    margin=dict(l=40, r=40, t=60, b=40)
+)
+st.plotly_chart(fig_rsm, use_container_width=True)
+
+# -----------------------
+# 9️⃣ Donut Charts + Table
+# -----------------------
+col3, col4 = st.columns([1, 1])
+
+with col3:
+    st.subheader("📊 Error Summary")
+    donut_row = st.columns(2)
+    with donut_row[0]:
+        fig_mape = go.Figure(data=[go.Pie(
+            labels=['MAPE (%)', 'Accuracy (%)'],
+            values=[mape, 100 - mape],
+            hole=0.6, marker_colors=['#EF553B', '#00CC96'],
+            textinfo='label+percent'
+        )])
+        fig_mape.update_layout(title=dict(text=f"Global MAPE: {mape:.2f}%", x=0.5), showlegend=False, height=250)
+        st.plotly_chart(fig_mape, use_container_width=True)
+    with donut_row[1]:
+        fig_local = go.Figure(data=[go.Pie(
+            labels=['Local Error (%)', 'Accuracy (%)'],
+            values=[local_mape, 100 - local_mape],
+            hole=0.6, marker_colors=['#FFA15A', '#19D3F3'],
+            textinfo='label+percent'
+        )])
+        fig_local.update_layout(title=dict(text=f"Local Error: {local_mape:.2f}%", x=0.5), showlegend=False, height=250)
+        st.plotly_chart(fig_local, use_container_width=True)
+
+with col4:
+    st.subheader("🔍 Matched Data Points")
+    comparison_df = pd.DataFrame({
+        feature_x: matched_synth[feature_x],
+        feature_y: matched_synth[feature_y],
+        f"Synthetic_{target_option}": y_synth,
+        f"Actual_{target_option}": y_real,
+        "Abs_Error": abs_error,
+        "Percent_Error": percent_error
+    }).sort_values("Percent_Error")
+    st.dataframe(comparison_df, use_container_width=True, height=300)
+
+# -----------------------
+# 🔟 Summary Info
+# -----------------------
+st.info(f"""
+**Target:** `{target_option}` | **X:** `{feature_x}` | **Y:** `{feature_y}`  
+**Threshold:** ±{threshold_percent:.1f}% feature range | **Matches Found:** {len(matched_synth)}  
+**Global MAPE:** {mape:.2f}% | **Local Error:** {local_mape:.2f}%  
+**All other features are fixed at their mean values.**
+""")
+
+
+
+
+
+
+
+
 
 
 
