@@ -1,3 +1,81 @@
+# -----------------------
+# 4️⃣ Dynamic Range Filter (for Synthetic Data Only)
+# -----------------------
+x_min, x_max = float(synth_df[feature_x].min()), float(synth_df[feature_x].max())
+y_min, y_max = float(synth_df[feature_y].min()), float(synth_df[feature_y].max())
+
+st.sidebar.markdown("### 🎚️ Synthetic Range Filter")
+x_range = st.sidebar.slider(f"{feature_x} Range", min_value=x_min, max_value=x_max, value=(x_min, x_max))
+y_range = st.sidebar.slider(f"{feature_y} Range", min_value=y_min, max_value=y_max, value=(y_min, y_max))
+
+synth_filtered = synth_df[
+    (synth_df[feature_x] >= x_range[0]) & (synth_df[feature_x] <= x_range[1]) &
+    (synth_df[feature_y] >= y_range[0]) & (synth_df[feature_y] <= y_range[1])
+].reset_index(drop=True)
+
+st.sidebar.write(f"🧩 Filtered Synthetic Samples: {len(synth_filtered)}")
+
+if len(synth_filtered) == 0:
+    st.warning("⚠️ No synthetic samples found in this range.")
+    st.stop()
+
+# -----------------------
+# 5️⃣ Find Closest Real Data for Each Synthetic Point
+# -----------------------
+key_features = [feature_x, feature_y]
+tree = cKDTree(real_df[key_features].values)
+distances, indices = tree.query(synth_filtered[key_features].values, k=1)
+
+matched_real = real_df.iloc[indices].reset_index(drop=True)
+matched_synth = synth_filtered.copy()
+
+# -----------------------
+# 6️⃣ Compute Errors Between Real and Synthetic Targets
+# -----------------------
+y_real = matched_real[target_option].values
+y_synth = matched_synth[target_option].values
+
+eps = 1e-8
+mae = np.mean(np.abs(y_real - y_synth))
+rmse = np.sqrt(np.mean((y_real - y_synth) ** 2))
+mape = np.mean(np.abs((y_real - y_synth) / (y_real + eps))) * 100
+
+st.markdown(f"""
+### 📊 Validation Summary for `{target_option}`
+| Metric | Value |
+|--------|--------|
+| **Filtered Synthetic Samples** | `{len(synth_filtered)}` |
+| **MAE** | `{mae:.4f}` |
+| **RMSE** | `{rmse:.4f}` |
+| **MAPE** | `{mape:.2f}%` |
+""")
+
+# -----------------------
+# 7️⃣ Display Matched Data
+# -----------------------
+comparison_df = pd.DataFrame({
+    f"{feature_x}_synthetic": matched_synth[feature_x],
+    f"{feature_y}_synthetic": matched_synth[feature_y],
+    f"Synthetic_{target_option}": y_synth,
+    f"Real_{target_option}": y_real,
+    "Distance": distances,
+})
+comparison_df["Abs_Error"] = np.abs(comparison_df[f"Real_{target_option}"] - comparison_df[f"Synthetic_{target_option}"])
+comparison_df["Percent_Error"] = (
+    comparison_df["Abs_Error"] / (np.abs(comparison_df[f"Real_{target_option}"]) + 1e-8) * 100
+)
+
+st.markdown(f"### 🧾 Synthetic–Real Matches Within {feature_x}: {x_range}, {feature_y}: {y_range}")
+st.dataframe(comparison_df.head(25), use_container_width=True)
+
+
+
+
+
+
+
+
+
 import os
 import numpy as np
 import pandas as pd
