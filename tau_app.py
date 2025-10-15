@@ -1,13 +1,13 @@
 #!/usr/bin/env python
+#!/usr/bin/env python
 # coding: utf-8
 
 import os
 import numpy as np
 import pandas as pd
 import streamlit as st
-import plotly.express as px
 import plotly.graph_objects as go
-from scipy.spatial import cKDTree
+import plotly.express as px
 import tensorflow as tf
 import joblib
 
@@ -51,16 +51,13 @@ feature_y = st.sidebar.selectbox("Feature Y", [c for c in feature_cols if c != f
 target_option = st.sidebar.selectbox("Target Output", target_cols)
 
 # -----------------------
-# 4️⃣ Range & Threshold
+# 4️⃣ Range Selection
 # -----------------------
 x_min, x_max = synth_df[feature_x].min(), synth_df[feature_x].max()
 y_min, y_max = synth_df[feature_y].min(), synth_df[feature_y].max()
 
 x_range = st.sidebar.slider(f"{feature_x} Range", float(x_min), float(x_max), (float(x_min), float(x_max)))
 y_range = st.sidebar.slider(f"{feature_y} Range", float(y_min), float(y_max), (float(y_min), float(y_max)))
-
-threshold_percent = st.sidebar.slider("Matching tolerance (% of feature range)", 0.5, 10.0, 2.0)
-threshold = ((x_max - x_min) + (y_max - y_min)) / 2 * (threshold_percent / 100)
 
 # -----------------------
 # 5️⃣ Filter Data
@@ -106,17 +103,15 @@ filtered_real = real_df[
 sampled_real = filtered_real.sample(n=min(5, len(filtered_real)), random_state=42) if len(filtered_real) > 0 else pd.DataFrame()
 
 if not sampled_real.empty:
-    # Predict for real points under both setups
     sampled_real_pred_const = predict_ann(sampled_real.assign(**{c: X_mean[c] for c in X_train.columns if c not in [feature_x, feature_y]}))
     sampled_real_pred_free = predict_ann(sampled_real)
-
     sampled_real["Pred_Const"] = sampled_real_pred_const
     sampled_real["Pred_Free"] = sampled_real_pred_free
     sampled_real["Error_Const_%"] = np.abs(sampled_real[target_option] - sampled_real_pred_const) / (np.abs(sampled_real[target_option]) + 1e-8) * 100
     sampled_real["Error_Free_%"] = np.abs(sampled_real[target_option] - sampled_real_pred_free) / (np.abs(sampled_real[target_option]) + 1e-8) * 100
 
 # -----------------------
-# 8️⃣ Scatter Plots with Hover Info
+# 8️⃣ Scatter Plots with Hover Cards
 # -----------------------
 st.markdown("## 🎨 Scatter Plots — Synthetic vs Real Comparison")
 
@@ -125,79 +120,119 @@ zmax = max(synth_const_pred.max(), synth_free_pred.max(), real_df[target_option]
 
 col1, col2, col3 = st.columns(3)
 
-def add_hover_labels(fig, df, xcol, ycol, zvals, title, color):
-    hover_texts = [
-        f"<b>{xcol}</b>: {x:.3f}<br>"
-        f"<b>{ycol}</b>: {y:.3f}<br>"
-        f"<b>{target_option}</b>: {z:.3f}"
-        for x, y, z in zip(df[xcol], df[ycol], zvals)
-    ]
-    fig.update_traces(hovertemplate=None, hoverinfo='skip')
-    fig.add_trace(go.Scatter(
-        x=df[xcol], y=df[ycol],
-        mode="markers",
-        marker=dict(size=6, color=color, line=dict(width=0.5, color="black")),
-        text=hover_texts,
-        hoverinfo="text",
-        name=title
-    ))
-    return fig
-
+# Scatter 1: Synthetic Constant
 with col1:
     st.subheader("🟡 Synthetic (Mean ± Std)")
-    fig1 = px.scatter(synth_filtered, x=feature_x, y=feature_y,
-                      color=synth_const_pred, color_continuous_scale="RdYlGn_r",
-                      range_color=[zmin, zmax])
-    fig1 = add_hover_labels(fig1, synth_filtered, feature_x, feature_y, synth_const_pred, "Synthetic Const", synth_const_pred)
-    # Add random stars
+    fig1 = go.Figure(data=go.Scatter(
+        x=synth_filtered[feature_x],
+        y=synth_filtered[feature_y],
+        mode="markers",
+        marker=dict(size=6, color=synth_const_pred, colorscale="RdYlGn_r", cmin=zmin, cmax=zmax,
+                    colorbar=dict(title=f"{target_option}")),
+        hovertemplate=(
+            f"<b>{feature_x}</b>: %{{x:.3f}}<br>"
+            f"<b>{feature_y}</b>: %{{y:.3f}}<br>"
+            f"<b>Predicted {target_option} (Const)</b>: %{{marker.color:.3f}}<extra></extra>"
+        )
+    ))
+
     if not sampled_real.empty:
         fig1.add_trace(go.Scatter(
-            x=sampled_real[feature_x], y=sampled_real[feature_y],
-            mode="markers+text",
+            x=sampled_real[feature_x],
+            y=sampled_real[feature_y],
+            mode="markers",
             marker=dict(size=11, color="blue", symbol="star", line=dict(width=1.5, color="black")),
-            text=[
-                f"<b>{feature_x}</b>: {row[feature_x]:.2f}<br>"
-                f"<b>{feature_y}</b>: {row[feature_y]:.2f}<br>"
-                f"<b>Actual {target_option}</b>: {row[target_option]:.2f}<br>"
-                f"<b>Predicted (Mean±Std)</b>: {row['Pred_Const']:.2f}<br>"
-                f"<b>Error (%)</b>: {row['Error_Const_%']:.2f}"
-                for _, row in sampled_real.iterrows()
-            ],
-            hoverinfo="text",
-            name="Sampled Real Points"
+            hovertemplate=(
+                f"<b>{feature_x}</b>: %{{x:.2f}}<br>"
+                f"<b>{feature_y}</b>: %{{y:.2f}}<br>"
+                f"<b>Actual {target_option}</b>: %{{customdata[0]:.2f}}<br>"
+                f"<b>Pred (Const)</b>: %{{customdata[1]:.2f}}<br>"
+                f"<b>Error %</b>: %{{customdata[2]:.2f}}<extra></extra>"
+            ),
+            customdata=sampled_real[[target_option, "Pred_Const", "Error_Const_%"]].values,
+            name="Highlighted Real Points"
         ))
+
+    fig1.update_layout(title=f"{target_option} (Mean ± Std)", template="plotly_white")
     st.plotly_chart(fig1, use_container_width=True)
 
+# Scatter 2: Synthetic Free
 with col2:
     st.subheader("🔵 Synthetic (Free Features)")
-    fig2 = px.scatter(synth_filtered, x=feature_x, y=feature_y,
-                      color=synth_free_pred, color_continuous_scale="RdYlGn_r",
-                      range_color=[zmin, zmax])
-    fig2 = add_hover_labels(fig2, synth_filtered, feature_x, feature_y, synth_free_pred, "Synthetic Free", synth_free_pred)
+    fig2 = go.Figure(data=go.Scatter(
+        x=synth_filtered[feature_x],
+        y=synth_filtered[feature_y],
+        mode="markers",
+        marker=dict(size=6, color=synth_free_pred, colorscale="RdYlGn_r", cmin=zmin, cmax=zmax,
+                    colorbar=dict(title=f"{target_option}")),
+        hovertemplate=(
+            f"<b>{feature_x}</b>: %{{x:.3f}}<br>"
+            f"<b>{feature_y}</b>: %{{y:.3f}}<br>"
+            f"<b>Predicted {target_option} (Free)</b>: %{{marker.color:.3f}}<extra></extra>"
+        )
+    ))
+
     if not sampled_real.empty:
         fig2.add_trace(go.Scatter(
-            x=sampled_real[feature_x], y=sampled_real[feature_y],
-            mode="markers+text",
+            x=sampled_real[feature_x],
+            y=sampled_real[feature_y],
+            mode="markers",
             marker=dict(size=11, color="blue", symbol="star", line=dict(width=1.5, color="black")),
-            text=[
-                f"<b>{feature_x}</b>: {row[feature_x]:.2f}<br>"
-                f"<b>{feature_y}</b>: {row[feature_y]:.2f}<br>"
-                f"<b>Actual {target_option}</b>: {row[target_option]:.2f}<br>"
-                f"<b>Predicted (Free)</b>: {row['Pred_Free']:.2f}<br>"
-                f"<b>Error (%)</b>: {row['Error_Free_%']:.2f}"
-                for _, row in sampled_real.iterrows()
-            ],
-            hoverinfo="text"
+            hovertemplate=(
+                f"<b>{feature_x}</b>: %{{x:.2f}}<br>"
+                f"<b>{feature_y}</b>: %{{y:.2f}}<br>"
+                f"<b>Actual {target_option}</b>: %{{customdata[0]:.2f}}<br>"
+                f"<b>Pred (Free)</b>: %{{customdata[1]:.2f}}<br>"
+                f"<b>Error %</b>: %{{customdata[2]:.2f}}<extra></extra>"
+            ),
+            customdata=sampled_real[[target_option, "Pred_Free", "Error_Free_%"]].values,
+            name="Highlighted Real Points"
         ))
+
+    fig2.update_layout(title=f"{target_option} (Free Features)", template="plotly_white")
     st.plotly_chart(fig2, use_container_width=True)
 
+# Scatter 3: Real Data
 with col3:
     st.subheader("🟢 Real Data (Actual)")
-    fig3 = px.scatter(real_df, x=feature_x, y=feature_y,
-                      color=real_df[target_option], color_continuous_scale="RdYlGn_r",
-                      range_color=[zmin, zmax])
-    fig3 = add_hover_labels(fig3, real_df, feature_x, feature_y, real_df[target_option], "Real", real_df[target_option])
+    fig3 = go.Figure(data=go.Scatter(
+        x=real_df[feature_x],
+        y=real_df[feature_y],
+        mode="markers",
+        marker=dict(size=6, color=real_df[target_option], colorscale="RdYlGn_r", cmin=zmin, cmax=zmax,
+                    colorbar=dict(title=f"{target_option}")),
+        hovertemplate=(
+            f"<b>{feature_x}</b>: %{{x:.3f}}<br>"
+            f"<b>{feature_y}</b>: %{{y:.3f}}<br>"
+            f"<b>Actual {target_option}</b>: %{{marker.color:.3f}}<extra></extra>"
+        )
+    ))
+    fig3.update_layout(title=f"Actual {target_option}", template="plotly_white")
     st.plotly_chart(fig3, use_container_width=True)
+
+# -----------------------
+# 9️⃣ DataFrame Summary
+# -----------------------
+st.markdown("## 🧾 Comparison DataFrame")
+
+if not sampled_real.empty:
+    df_summary = sampled_real[[feature_x, feature_y, target_option, "Pred_Const", "Pred_Free", "Error_Const_%", "Error_Free_%"]]
+    df_summary.rename(columns={
+        target_option: f"Actual_{target_option}",
+        "Pred_Const": f"Pred_{target_option}_Const",
+        "Pred_Free": f"Pred_{target_option}_Free",
+        "Error_Const_%": "Error_Const(%)",
+        "Error_Free_%": "Error_Free(%)"
+    }, inplace=True)
+    st.dataframe(df_summary.style.format(precision=2), use_container_width=True)
+else:
+    st.warning("⚠️ No random points found within this range.")
+
+st.info(f"""
+**X:** {feature_x} | **Y:** {feature_y} | **Target:** {target_option}  
+Hover over any point to see: X, Y, and T1 (Predicted / Actual).  
+Blue stars = Real samples with predicted values and % error.
+""")
 
 
 
