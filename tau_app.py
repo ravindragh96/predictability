@@ -218,11 +218,14 @@ with col3:
         name="Sampled Real (Validation)"
     ))
 
-    # Show visible colorbar
+    # Fixed colorbar: pass title as dict to avoid attribute errors
     fig_rsm.update_layout(
         coloraxis_colorbar=dict(
-            title=target_option, titleside="right", ticks="outside",
-            tickfont=dict(size=11), len=0.8, x=1.05
+            title=dict(text=target_option),
+            ticks="outside",
+            tickfont=dict(size=11),
+            len=0.8,
+            x=1.05
         ),
         margin=dict(l=40, r=160, t=50, b=50),
         xaxis=dict(title=feature_x, range=[x_range[0], x_range[1]]),
@@ -291,6 +294,7 @@ with col6:
 # Footer
 # -----------------------
 st.info(f"Target: {target_option} | X: {feature_x} | Y: {feature_y} | Validation Points: {len(sampled_real)}")
+
 
 
 
