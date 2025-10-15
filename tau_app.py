@@ -179,7 +179,31 @@ with col_donuts:
                                       values=[mape, 100 - mape],
                                       hole=0.6, marker_colors=['#EF553B', '#00CC96'],
                                       textinfo='label+percent')])
-    fig_mape.update_layout(title=dict(text=f"Global MAPE
+    fig_mape.update_layout(title=dict(text=f"Global MAPE: {mape:.2f}%", x=0.5),
+                           showlegend=False, height=250)
+    st.plotly_chart(fig_mape, use_container_width=True)
+
+    fig_local = go.Figure(data=[go.Pie(labels=['Local Error (%)', 'Accuracy (%)'],
+                                       values=[local_mape, 100 - local_mape],
+                                       hole=0.6, marker_colors=['#FFA15A', '#19D3F3'],
+                                       textinfo='label+percent')])
+    fig_local.update_layout(title=dict(text=f"Local Error: {local_mape:.2f}%", x=0.5),
+                            showlegend=False, height=250)
+    st.plotly_chart(fig_local, use_container_width=True)
+
+# -----------------------
+# 9️⃣ Summary Info
+# -----------------------
+st.info(f"""
+**Target:** `{target_option}` | **X:** `{feature_x}` | **Y:** `{feature_y}`  
+**Threshold:** ±{threshold_percent:.1f}% | **Synthetic Points:** {len(synth_filtered)}  
+✅ Now you can visually compare:  
+- Left: Mean ±Std (constant features)  
+- Middle: Free features  
+- Right: Actual data  
+to understand how feature variation affects ANN-predicted {target_option}.
+""")
+
 
 
 
