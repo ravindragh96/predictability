@@ -1,21 +1,23 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+#!/usr/bin/env python
+# coding: utf-8
+
 import os
 import numpy as np
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
+import plotly.express as px
 import tensorflow as tf
 import joblib
 
 # -----------------------
-# 1️⃣ Setup
+# CONFIG - update BASE_DIR if needed
 # -----------------------
-st.set_page_config(page_title="Response Surface Modeling (RSM)", layout="wide")
-st.title("🎛️ Response Surface Modeling — Synthetic vs Real (Constant & Free Features)")
-
-BASE_DIR = r"C:\Users\gantrav01\RD_predictability_11925"
+st.set_page_config(page_title="RSM Dashboard", layout="wide")
+BASE_DIR = r"C:\Users\gantrav01\RD_predictability_11925"  # <-- update if needed
 
 TRAIN_X_PATH = os.path.join(BASE_DIR, "H_vs_Tau_training.xlsx")
 TRAIN_Y_PATH = os.path.join(BASE_DIR, "H_vs_Tau_target.xlsx")
@@ -26,201 +28,363 @@ X_SCALER_PATH = os.path.join(BASE_DIR, "x_eta_scaler.pkl")
 Y_SCALER_PATH = os.path.join(BASE_DIR, "y_eta_scaler.pkl")
 
 # -----------------------
-# 2️⃣ Load Data & Model
+# LOAD DATA & MODEL
 # -----------------------
-X_train = pd.read_excel(TRAIN_X_PATH)
-y_train = pd.read_excel(TRAIN_Y_PATH)
-real_df = pd.read_excel(REAL_PATH)
-synth_df = pd.read_excel(SYNTH_PATH)
+@st.cache_data(show_spinner=False)
+def load_data():
+    X_train = pd.read_excel(TRAIN_X_PATH)
+    y_train = pd.read_excel(TRAIN_Y_PATH)
+    real_df = pd.read_excel(REAL_PATH)
+    synth_df = pd.read_excel(SYNTH_PATH)
+    return X_train, y_train, real_df, synth_df
 
-model = tf.keras.models.load_model(MODEL_PATH, compile=False)
-x_scaler = joblib.load(X_SCALER_PATH)
-y_scaler = joblib.load(Y_SCALER_PATH)
+@st.cache_resource(show_spinner=False)
+def load_model_and_scalers():
+    model = tf.keras.models.load_model(MODEL_PATH, compile=False)
+    x_scaler = joblib.load(X_SCALER_PATH)
+    y_scaler = joblib.load(Y_SCALER_PATH)
+    return model, x_scaler, y_scaler
+
+X_train, y_train, real_df, synth_df = load_data()
+model, x_scaler, y_scaler = load_model_and_scalers()
 
 # -----------------------
-# 3️⃣ Sidebar Controls
+# SIDEBAR CONTROLS
 # -----------------------
+st.sidebar.header("Controls")
 feature_cols = list(X_train.columns)
 target_cols = list(y_train.columns)
 
-st.sidebar.header("⚙️ Controls")
-feature_x = st.sidebar.selectbox("Feature X", feature_cols)
-feature_y = st.sidebar.selectbox("Feature Y", [c for c in feature_cols if c != feature_x])
-target_option = st.sidebar.selectbox("Target Output", target_cols)
+feature_x = st.sidebar.selectbox("Feature X", feature_cols, index=0)
+feature_y = st.sidebar.selectbox("Feature Y", [c for c in feature_cols if c != feature_x], index=1)
+target_option = st.sidebar.selectbox("Target (output)", target_cols, index=0)
 
-x_min, x_max = synth_df[feature_x].min(), synth_df[feature_x].max()
-y_min, y_max = synth_df[feature_y].min(), synth_df[feature_y].max()
+# slider ranges from synthetic dataset
+x_min, x_max = float(synth_df[feature_x].min()), float(synth_df[feature_x].max())
+y_min, y_max = float(synth_df[feature_y].min()), float(synth_df[feature_y].max())
 
-x_range = st.sidebar.slider(f"{feature_x} Range", float(x_min), float(x_max), (float(x_min), float(x_max)))
-y_range = st.sidebar.slider(f"{feature_y} Range", float(y_min), float(y_max), (float(y_min), float(y_max)))
+x_range = st.sidebar.slider(f"{feature_x} range", x_min, x_max, (x_min, x_max))
+y_range = st.sidebar.slider(f"{feature_y} range", y_min, y_max, (y_min, y_max))
+
+n_samples = st.sidebar.number_input("Number of random real samples to highlight", min_value=1, max_value=50, value=10, step=1)
+# -----------------------
+# PREDICT HELPERS
+# -----------------------
+def align_and_predict(df_in):
+    # make sure columns align with training order
+    df_aligned = df_in[X_train.columns].copy()
+    scaled = x_scaler.transform(df_aligned.astype(np.float32))
+    preds_scaled = model.predict(scaled, verbose=0)
+    preds = y_scaler.inverse_transform(preds_scaled)
+    return preds[:, y_train.columns.get_loc(target_option)]
 
 # -----------------------
-# 4️⃣ Filter Data
+# FILTER SYNTHETIC & REAL (range)
 # -----------------------
 synth_filtered = synth_df[
     (synth_df[feature_x] >= x_range[0]) & (synth_df[feature_x] <= x_range[1]) &
     (synth_df[feature_y] >= y_range[0]) & (synth_df[feature_y] <= y_range[1])
 ].reset_index(drop=True)
 
-# -----------------------
-# 5️⃣ ANN Prediction Function
-# -----------------------
-def predict_ann(df):
-    df_aligned = df[X_train.columns].copy()
-    scaled = x_scaler.transform(df_aligned.astype(np.float32))
-    preds = model.predict(scaled, verbose=0)
-    preds = y_scaler.inverse_transform(preds)
-    return preds[:, y_train.columns.get_loc(target_option)]
-
-# -----------------------
-# 6️⃣ Predict Synthetic Data (Constant vs Free)
-# -----------------------
-X_mean = X_train.mean(numeric_only=True)
-X_std = X_train.std(numeric_only=True)
-
-grid_const = synth_filtered.copy()
-for c in X_train.columns:
-    if c not in [feature_x, feature_y]:
-        grid_const[c] = X_mean[c]
-
-synth_const_pred = predict_ann(grid_const)
-synth_free_pred = predict_ann(synth_filtered)
-
-# -----------------------
-# 7️⃣ Random Real Points + Predictions
-# -----------------------
-filtered_real = real_df[
+real_filtered = real_df[
     (real_df[feature_x] >= x_range[0]) & (real_df[feature_x] <= x_range[1]) &
     (real_df[feature_y] >= y_range[0]) & (real_df[feature_y] <= y_range[1])
-]
-sampled_real = filtered_real.sample(n=min(5, len(filtered_real)), random_state=42) if len(filtered_real) > 0 else pd.DataFrame()
-
-if not sampled_real.empty:
-    sampled_real_pred_const = predict_ann(sampled_real.assign(**{c: X_mean[c] for c in X_train.columns if c not in [feature_x, feature_y]}))
-    sampled_real_pred_free = predict_ann(sampled_real)
-    sampled_real["Pred_Const"] = sampled_real_pred_const
-    sampled_real["Pred_Free"] = sampled_real_pred_free
-    sampled_real["Error_Const_%"] = np.abs(sampled_real[target_option] - sampled_real_pred_const) / (np.abs(sampled_real[target_option]) + 1e-8) * 100
-    sampled_real["Error_Free_%"] = np.abs(sampled_real[target_option] - sampled_real_pred_free) / (np.abs(sampled_real[target_option]) + 1e-8) * 100
+].reset_index(drop=True)
 
 # -----------------------
-# 8️⃣ Scatter Plots
+# PREPARE CONSTANT vs FREE predictions for synthetic points
+# - Constant: other features = training mean
+# - Free: use synth_filtered as-is
 # -----------------------
-st.markdown("## 🎨 Scatter Plots — Synthetic vs Real Comparison")
+X_mean = X_train.mean(numeric_only=True)
 
-zmin = min(synth_const_pred.min(), synth_free_pred.min(), real_df[target_option].min())
-zmax = max(synth_const_pred.max(), synth_free_pred.max(), real_df[target_option].max())
+# constant copy: set all non X,Y features to mean
+synth_const_df = synth_filtered.copy()
+for c in X_train.columns:
+    if c not in [feature_x, feature_y]:
+        synth_const_df[c] = X_mean[c]
+
+# predictions
+if len(synth_const_df) > 0:
+    synth_const_pred = align_and_predict(synth_const_df)
+else:
+    synth_const_pred = np.array([])
+
+if len(synth_filtered) > 0:
+    synth_free_pred = align_and_predict(synth_filtered)
+else:
+    synth_free_pred = np.array([])
+
+# -----------------------
+# pick random real samples (n_samples) from real_filtered and predict for both const & free
+# -----------------------
+sampled_real = pd.DataFrame()
+if len(real_filtered) > 0:
+    sample_n = min(n_samples, len(real_filtered))
+    sampled_real = real_filtered.sample(n=sample_n, random_state=42).reset_index(drop=True)
+    # predicted values when other features set to mean (const)
+    sampled_const_df = sampled_real.copy()
+    for c in X_train.columns:
+        if c not in [feature_x, feature_y]:
+            sampled_const_df[c] = X_mean[c]
+    sampled_real["Pred_Const"] = align_and_predict(sampled_const_df)
+    # predicted values when free (real features as-is)
+    sampled_real["Pred_Free"] = align_and_predict(sampled_real)
+    # errors
+    sampled_real["Error_Const(%)"] = np.abs(sampled_real[target_option] - sampled_real["Pred_Const"]) / (np.abs(sampled_real[target_option]) + 1e-8) * 100
+    sampled_real["Error_Free(%)"] = np.abs(sampled_real[target_option] - sampled_real["Pred_Free"]) / (np.abs(sampled_real[target_option]) + 1e-8) * 100
+
+# -----------------------
+# Color scale bounds (shared)
+# -----------------------
+vals = []
+if synth_const_pred.size: vals.append(synth_const_pred.min()); vals.append(synth_const_pred.max())
+if synth_free_pred.size: vals.append(synth_free_pred.min()); vals.append(synth_free_pred.max())
+if len(real_df) > 0:
+    vals.append(real_df[target_option].min()); vals.append(real_df[target_option].max())
+if len(vals) == 0:
+    zmin, zmax = 0, 1
+else:
+    zmin, zmax = float(min(vals)), float(max(vals))
+
+# -----------------------
+# SCATTERS: 3 side-by-side
+# -----------------------
+st.markdown("## Scatter: Synthetic (const) | Synthetic (free) | Real (actual)")
 
 col1, col2, col3 = st.columns(3)
 
-def scatter_plot(title, x, y, color, zmin, zmax, hover_label, real_points=None, custom=None):
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=x, y=y, mode="markers",
-        marker=dict(size=6, color=color, colorscale="RdYlGn_r", cmin=zmin, cmax=zmax,
-                    colorbar=dict(title=hover_label)),
-        hovertemplate=(
-            f"<b>{feature_x}</b>: %{{x:.2f}}<br>"
-            f"<b>{feature_y}</b>: %{{y:.2f}}<br>"
-            f"<b>{hover_label}</b>: %{{marker.color:.2f}}<extra></extra>"
-        )
-    ))
-    if real_points is not None:
-        fig.add_trace(go.Scatter(
-            x=real_points[feature_x], y=real_points[feature_y],
-            mode="markers",
-            marker=dict(size=12, color="blue", symbol="star", line=dict(width=1.5, color="black")),
-            customdata=custom,
-            hovertemplate=(
-                f"<b>{feature_x}</b>: %{{x:.2f}}<br>"
-                f"<b>{feature_y}</b>: %{{y:.2f}}<br>"
-                f"<b>Actual {target_option}</b>: %{{customdata[0]:.2f}}<br>"
-                f"<b>Predicted</b>: %{{customdata[1]:.2f}}<br>"
-                f"<b>Error %</b>: %{{customdata[2]:.2f}}<extra></extra>"
-            )
-        ))
-    fig.update_layout(title=title, template="plotly_white")
-    return fig
+# helper to create hovertemplate for sample stars
+def star_hover_template_const():
+    return (
+        f"<b>{feature_x}</b>: %{{x:.3f}}<br>"
+        f"<b>{feature_y}</b>: %{{y:.3f}}<br>"
+        f"<b>Actual {target_option}</b>: %{{customdata[0]:.3f}}<br>"
+        f"<b>Pred (Const)</b>: %{{customdata[1]:.3f}}<br>"
+        f"<b>Pred (Free)</b>: %{{customdata[2]:.3f}}<br>"
+        f"<b>Error (Const%)</b>: %{{customdata[3]:.2f}}<br>"
+        f"<b>Error (Free%)</b>: %{{customdata[4]:.2f}}<extra></extra>"
+    )
 
+# Scatter 1: Synthetic constant
 with col1:
-    st.subheader("🟡 Synthetic (Constant Features)")
-    st.plotly_chart(scatter_plot("Constant Mean", synth_filtered[feature_x], synth_filtered[feature_y],
-                                 synth_const_pred, zmin, zmax, f"Pred {target_option}",
-                                 sampled_real if not sampled_real.empty else None,
-                                 sampled_real[[target_option, "Pred_Const", "Error_Const_%"]].values if not sampled_real.empty else None),
-                    use_container_width=True)
+    st.subheader("Synthetic (constant features = mean)")
+    fig1 = go.Figure()
+    if len(synth_filtered) > 0:
+        fig1.add_trace(go.Scatter(
+            x=synth_filtered[feature_x],
+            y=synth_filtered[feature_y],
+            mode="markers",
+            marker=dict(
+                size=6,
+                color=synth_const_pred,
+                colorscale="RdYlGn_r",
+                cmin=zmin, cmax=zmax,
+                showscale=True,
+                colorbar=dict(title=target_option)
+            ),
+            hovertemplate=(
+                f"<b>{feature_x}</b>: %{{x:.3f}}<br>"
+                f"<b>{feature_y}</b>: %{{y:.3f}}<br>"
+                f"<b>Pred {target_option} (Const)</b>: %{{marker.color:.3f}}<extra></extra>"
+            ),
+            name="synthetic-const"
+        ))
+    # add sampled real stars
+    if not sampled_real.empty:
+        fig1.add_trace(go.Scatter(
+            x=sampled_real[feature_x],
+            y=sampled_real[feature_y],
+            mode="markers",
+            marker=dict(size=12, color="blue", symbol="star", line=dict(width=1.3, color="black")),
+            customdata=sampled_real[[target_option, "Pred_Const", "Pred_Free", "Error_Const(%)", "Error_Free(%)"]].values,
+            hovertemplate=star_hover_template_const(),
+            name="real-samples"
+        ))
+    fig1.update_layout(template="plotly_white", height=520, xaxis_title=feature_x, yaxis_title=feature_y)
+    st.plotly_chart(fig1, use_container_width=True)
 
+# Scatter 2: Synthetic free
 with col2:
-    st.subheader("🔵 Synthetic (Free Features)")
-    st.plotly_chart(scatter_plot("Free Features", synth_filtered[feature_x], synth_filtered[feature_y],
-                                 synth_free_pred, zmin, zmax, f"Pred {target_option}",
-                                 sampled_real if not sampled_real.empty else None,
-                                 sampled_real[[target_option, "Pred_Free", "Error_Free_%"]].values if not sampled_real.empty else None),
-                    use_container_width=True)
+    st.subheader("Synthetic (free — as-is)")
+    fig2 = go.Figure()
+    if len(synth_filtered) > 0:
+        fig2.add_trace(go.Scatter(
+            x=synth_filtered[feature_x],
+            y=synth_filtered[feature_y],
+            mode="markers",
+            marker=dict(size=6, color=synth_free_pred, colorscale="RdYlGn_r", cmin=zmin, cmax=zmax, showscale=True,
+                        colorbar=dict(title=target_option)),
+            hovertemplate=(
+                f"<b>{feature_x}</b>: %{{x:.3f}}<br>"
+                f"<b>{feature_y}</b>: %{{y:.3f}}<br>"
+                f"<b>Pred {target_option} (Free)</b>: %{{marker.color:.3f}}<extra></extra>"
+            ),
+            name="synthetic-free"
+        ))
+    if not sampled_real.empty:
+        fig2.add_trace(go.Scatter(
+            x=sampled_real[feature_x],
+            y=sampled_real[feature_y],
+            mode="markers",
+            marker=dict(size=12, color="blue", symbol="star", line=dict(width=1.3, color="black")),
+            customdata=sampled_real[[target_option, "Pred_Const", "Pred_Free", "Error_Const(%)", "Error_Free(%)"]].values,
+            hovertemplate=star_hover_template_const(),
+            name="real-samples"
+        ))
+    fig2.update_layout(template="plotly_white", height=520, xaxis_title=feature_x, yaxis_title=feature_y)
+    st.plotly_chart(fig2, use_container_width=True)
 
+# Scatter 3: Real actual
 with col3:
-    st.subheader("🟢 Real Data (Actual)")
-    st.plotly_chart(scatter_plot("Actual Data", real_df[feature_x], real_df[feature_y],
-                                 real_df[target_option], zmin, zmax, f"Actual {target_option}",
-                                 sampled_real if not sampled_real.empty else None,
-                                 sampled_real[[target_option, target_option, "Error_Const_%"]].values if not sampled_real.empty else None),
-                    use_container_width=True)
+    st.subheader("Real data (actual)")
+    fig3 = go.Figure()
+    if len(real_df) > 0:
+        fig3.add_trace(go.Scatter(
+            x=real_df[feature_x],
+            y=real_df[feature_y],
+            mode="markers",
+            marker=dict(size=6, color=real_df[target_option], colorscale="RdYlGn_r", cmin=zmin, cmax=zmax, showscale=True,
+                        colorbar=dict(title=target_option)),
+            hovertemplate=(
+                f"<b>{feature_x}</b>: %{{x:.3f}}<br>"
+                f"<b>{feature_y}</b>: %{{y:.3f}}<br>"
+                f"<b>Actual {target_option}</b>: %{{marker.color:.3f}}<extra></extra>"
+            ),
+            name="real-all"
+        ))
+    if not sampled_real.empty:
+        # show same sampled stars in real plot
+        fig3.add_trace(go.Scatter(
+            x=sampled_real[feature_x],
+            y=sampled_real[feature_y],
+            mode="markers",
+            marker=dict(size=12, color="blue", symbol="star", line=dict(width=1.3, color="black")),
+            customdata=sampled_real[[target_option, "Pred_Const", "Pred_Free", "Error_Const(%)", "Error_Free(%)"]].values,
+            hovertemplate=star_hover_template_const(),
+            name="real-samples"
+        ))
+    fig3.update_layout(template="plotly_white", height=520, xaxis_title=feature_x, yaxis_title=feature_y)
+    st.plotly_chart(fig3, use_container_width=True)
 
 # -----------------------
-# 9️⃣ RSM Contour Plots
+# RSM contour plots (constant vs free) side-by-side
 # -----------------------
-st.markdown("## 🌀 Response Surface (RSM)")
+st.markdown("## RSM Contours — left: constant other features; right: free features baseline")
 
-f1_range = np.linspace(x_range[0], x_range[1], 60)
-f2_range = np.linspace(y_range[0], y_range[1], 60)
+f1_range = np.linspace(x_range[0], x_range[1], 80)
+f2_range = np.linspace(y_range[0], y_range[1], 80)
 F1, F2 = np.meshgrid(f1_range, f2_range)
-
 grid_surface = pd.DataFrame({feature_x: F1.ravel(), feature_y: F2.ravel()})
+# constant features = training mean
 for c in X_train.columns:
     if c not in [feature_x, feature_y]:
         grid_surface[c] = X_mean[c]
 
-pred_const = predict_ann(grid_surface).reshape(F1.shape)
-pred_free = predict_ann(synth_filtered.assign(**{feature_x: np.tile(f1_range, len(f2_range)), feature_y: np.repeat(f2_range, len(f1_range))})).reshape(F1.shape)
+pred_const_surface = align_and_predict(grid_surface).reshape(F1.shape)
+
+# For free-surface baseline: use mean of synth_df for other features (so surface differs from constant mean if synth distribution differs)
+grid_surface_free = grid_surface.copy()
+for c in X_train.columns:
+    if c not in [feature_x, feature_y]:
+        grid_surface_free[c] = synth_df[c].mean()
+pred_free_surface = align_and_predict(grid_surface_free).reshape(F1.shape)
 
 colA, colB = st.columns(2)
 
 with colA:
-    st.subheader("RSM — Constant Features")
-    fig_rsm1 = go.Figure(data=go.Contour(z=pred_const, x=f1_range, y=f2_range, colorscale="RdYlGn_r", ncontours=25,
+    st.subheader("RSM — Constant other features (training mean)")
+    fig_rsm1 = go.Figure(data=go.Contour(z=pred_const_surface, x=f1_range, y=f2_range,
+                                         colorscale="RdYlGn_r", ncontours=25,
                                          colorbar=dict(title=target_option)))
-    fig_rsm1.add_trace(go.Scatter(
-        x=synth_filtered[feature_x], y=synth_filtered[feature_y],
-        mode="markers", marker=dict(size=6, color="black"), name="Synthetic Points"))
+    # overlay synthetic points (const)
+    if len(synth_filtered) > 0:
+        fig_rsm1.add_trace(go.Scatter(
+            x=synth_filtered[feature_x], y=synth_filtered[feature_y],
+            mode="markers", marker=dict(size=6, color="white", line=dict(width=1, color="black")),
+            name="synthetic points"
+        ))
+    # overlay sampled real stars
+    if not sampled_real.empty:
+        fig_rsm1.add_trace(go.Scatter(
+            x=sampled_real[feature_x], y=sampled_real[feature_y],
+            mode="markers", marker=dict(size=12, color="blue", symbol="star", line=dict(width=1.3, color="black")),
+            customdata=sampled_real[[target_option, "Pred_Const", "Pred_Free", "Error_Const(%)", "Error_Free(%)"]].values,
+            hovertemplate=star_hover_template_const(),
+            name="real-samples"
+        ))
+    fig_rsm1.update_layout(template="plotly_white", height=520, xaxis_title=feature_x, yaxis_title=feature_y)
     st.plotly_chart(fig_rsm1, use_container_width=True)
 
 with colB:
-    st.subheader("RSM — Free Features")
-    fig_rsm2 = go.Figure(data=go.Contour(z=pred_free, x=f1_range, y=f2_range, colorscale="RdYlGn_r", ncontours=25,
+    st.subheader("RSM — Free baseline (synth mean for other features)")
+    fig_rsm2 = go.Figure(data=go.Contour(z=pred_free_surface, x=f1_range, y=f2_range,
+                                         colorscale="RdYlGn_r", ncontours=25,
                                          colorbar=dict(title=target_option)))
-    fig_rsm2.add_trace(go.Scatter(
-        x=synth_filtered[feature_x], y=synth_filtered[feature_y],
-        mode="markers", marker=dict(size=6, color="black"), name="Synthetic Points"))
+    if len(synth_filtered) > 0:
+        fig_rsm2.add_trace(go.Scatter(
+            x=synth_filtered[feature_x], y=synth_filtered[feature_y],
+            mode="markers", marker=dict(size=6, color="white", line=dict(width=1, color="black")),
+            name="synthetic points"
+        ))
+    if not sampled_real.empty:
+        fig_rsm2.add_trace(go.Scatter(
+            x=sampled_real[feature_x], y=sampled_real[feature_y],
+            mode="markers", marker=dict(size=12, color="blue", symbol="star", line=dict(width=1.3, color="black")),
+            customdata=sampled_real[[target_option, "Pred_Const", "Pred_Free", "Error_Const(%)", "Error_Free(%)"]].values,
+            hovertemplate=star_hover_template_const(),
+            name="real-samples"
+        ))
+    fig_rsm2.update_layout(template="plotly_white", height=520, xaxis_title=feature_x, yaxis_title=feature_y)
     st.plotly_chart(fig_rsm2, use_container_width=True)
 
 # -----------------------
-# 🔟 Error Metrics + DataFrame Side by Side
+# DONUTS & DATAFRAME in same row
 # -----------------------
-st.markdown("## 📊 Error Metrics & Matched Results")
+st.markdown("## Error Metrics & Matched Table")
+colD1, colD2 = st.columns([1, 2])
 
-if not sampled_real.empty:
-    mape_const = np.mean(sampled_real["Error_Const_%"])
-    mape_free = np.mean(sampled_real["Error_Free_%"])
+with colD1:
+    if not sampled_real.empty:
+        mape_const = sampled_real["Error_Const(%)"].mean()
+        mape_free = sampled_real["Error_Free(%)"].mean()
+    else:
+        mape_const = 0.0
+        mape_free = 0.0
 
-    colE1, colE2 = st.columns([1, 2])
+    fig_m1 = go.Figure(data=[go.Pie(labels=['MAPE', 'Accuracy'], values=[mape_const, 100 - mape_const],
+                                    hole=0.6, marker_colors=['#EF553B', '#00CC96'])])
+    fig_m1.update_layout(title_text=f"MAPE (Const): {mape_const:.2f}%", showlegend=False)
+    st.plotly_chart(fig_m1, use_container_width=True, height=300)
 
-    with colE1:
-        fig_mape1 = go.Figure(data=[go.Pie(labels=['MAPE (Const)', 'Accuracy'], values=[mape_const, 100 - mape_const],
-                                           hole=0.6, marker_colors=['#EF553B', '#00CC96'])])
-        fig_mape1.update_layout(title_text=f"Global MAPE (Const): {mape_const:.2f}%", showlegend=False, height=300)
-        fig_mape2 = go.Figure(data=[go.Pie(labels=['MAPE (Free)', 'Accuracy'], values=[mape_free, 100 - mape_free],
-                                           hole=0.6, marker_colors=['#FFA15A', '#19D3F3'])])
-        fig_mape2.update_layout(title
+    fig_m2 = go.Figure(data=[go.Pie(labels=['MAPE', 'Accuracy'], values=[mape_free, 100 - mape_free],
+                                    hole=0.6, marker_colors=['#FFA15A', '#19D3F3'])])
+    fig_m2.update_layout(title_text=f"MAPE (Free): {mape_free:.2f}%", showlegend=False)
+    st.plotly_chart(fig_m2, use_container_width=True, height=300)
+
+with colD2:
+    st.subheader("Comparison DataFrame (sampled real points)")
+    if not sampled_real.empty:
+        df_summary = sampled_real[[feature_x, feature_y, target_option, "Pred_Const", "Pred_Free", "Error_Const(%)", "Error_Free(%)"]].copy()
+        df_summary = df_summary.rename(columns={
+            target_option: f"Actual_{target_option}",
+            "Pred_Const": f"Pred_{target_option}_Const",
+            "Pred_Free": f"Pred_{target_option}_Free",
+            "Error_Const(%)": "Error_Const(%)",
+            "Error_Free(%)": "Error_Free(%)"
+        })
+        st.dataframe(df_summary.style.format("{:.3f}"), use_container_width=True)
+        # download button
+        csv = df_summary.to_csv(index=False).encode("utf-8")
+        st.download_button("Download comparison CSV", csv, file_name="rsm_comparison.csv")
+    else:
+        st.info("No sampled real points in selected range — increase range or change X/Y.")
+
+# -------------
+# Footer note
+# -------------
+st.info("RSM contours: left uses training means for other features; right uses synthetic mean baseline. Stars = sampled real points (hover to see actual vs predicted and % error).")
+
 
 
 
