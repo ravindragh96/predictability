@@ -13,7 +13,7 @@ import joblib
 # 1️⃣ Setup
 # -----------------------
 st.set_page_config(page_title="RSM Comparison Dashboard", layout="wide")
-st.title("🎛️ Response Surface Modeling (RSM) — Real vs Synthetic Comparison")
+st.title("🎛️ Response Surface Modeling (RSM) — Real vs Synthetic Comparison (Optimized)")
 
 BASE_DIR = r"C:\Users\gantrav01\RD_predictability_11925"
 
@@ -26,16 +26,32 @@ X_SCALER_PATH = os.path.join(BASE_DIR, "x_eta_scaler.pkl")
 Y_SCALER_PATH = os.path.join(BASE_DIR, "y_eta_scaler.pkl")
 
 # -----------------------
-# 2️⃣ Load Data
+# 2️⃣ Caching for Speed
 # -----------------------
-X_train = pd.read_excel(TRAIN_X_PATH)
-y_train = pd.read_excel(TRAIN_Y_PATH)
-test_df = pd.read_excel(TEST_PATH)
-synth_df = pd.read_excel(SYNTH_PATH)
+@st.cache_resource
+def load_model_and_scalers():
+    model = tf.keras.models.load_model(MODEL_PATH, compile=False)
+    x_scaler = joblib.load(X_SCALER_PATH)
+    y_scaler = joblib.load(Y_SCALER_PATH)
+    return model, x_scaler, y_scaler
 
-# Align columns
+@st.cache_data
+def load_datasets():
+    X_train = pd.read_excel(TRAIN_X_PATH)
+    y_train = pd.read_excel(TRAIN_Y_PATH)
+    test_df = pd.read_excel(TEST_PATH)
+    synth_df = pd.read_excel(SYNTH_PATH)
+    return X_train, y_train, test_df, synth_df
+
+model, x_scaler, y_scaler = load_model_and_scalers()
+X_train, y_train, test_df, synth_df = load_datasets()
+
+# -----------------------
+# 3️⃣ Prepare Data
+# -----------------------
 feature_cols = X_train.columns.tolist()
 target_cols = y_train.columns.tolist()
+target_output = "T1"
 
 X_test = test_df[feature_cols]
 y_actual_df = test_df[target_cols]
@@ -47,74 +63,60 @@ if "H1" in X_test.columns:
 if "H1" in X_synth.columns:
     X_synth["H1"] = 100.0
 
-# -----------------------
-# 3️⃣ Load Model & Scalers
-# -----------------------
-try:
-    model = tf.keras.models.load_model(MODEL_PATH, compile=False)
-    st.success("✅ Model loaded successfully.")
-except Exception as e:
-    st.error(f"❌ Model loading failed: {e}")
-    st.stop()
-
-x_scaler = joblib.load(X_SCALER_PATH)
-y_scaler = joblib.load(Y_SCALER_PATH)
+output_index = y_train.columns.get_loc(target_output)
 
 # -----------------------
 # 4️⃣ Sidebar Controls
 # -----------------------
-st.sidebar.header("⚙️ Visualization Controls")
+st.sidebar.header("⚙️ RSM Controls")
 feature_x = st.sidebar.selectbox("Select Feature X", feature_cols)
 feature_y = st.sidebar.selectbox("Select Feature Y", [c for c in feature_cols if c != feature_x])
-target_output = st.sidebar.selectbox("Select Target Output", target_cols, index=0)
 
-output_index = y_train.columns.get_loc(target_output)
-
-# -----------------------
-# 5️⃣ X, Y Range Sliders
-# -----------------------
 x_min, x_max = float(X_test[feature_x].min()), float(X_test[feature_x].max())
 y_min, y_max = float(X_test[feature_y].min()), float(X_test[feature_y].max())
 
 x_range = st.sidebar.slider(f"{feature_x} Range", min_value=x_min, max_value=x_max, value=(x_min, x_max))
 y_range = st.sidebar.slider(f"{feature_y} Range", min_value=y_min, max_value=y_max, value=(y_min, y_max))
 
+show_free_synth = st.sidebar.checkbox("Show Synthetic (Free Features)", value=True)
+
 # -----------------------
-# 6️⃣ Generate Synthetic Predictions
+# 5️⃣ Helper Functions
+# -----------------------
+def predict_df(df):
+    scaled = x_scaler.transform(df.astype(np.float32))
+    preds = model.predict(scaled, verbose=0)
+    return y_scaler.inverse_transform(preds)
+
+# -----------------------
+# 6️⃣ Compute Predictions
 # -----------------------
 X_mean = X_test.mean(numeric_only=True)
 
-# Constant Mode
-grid_const = pd.DataFrame({
-    feature_x: np.linspace(x_range[0], x_range[1], 60),
-    feature_y: np.linspace(y_range[0], y_range[1], 60)
-})
-F1, F2 = np.meshgrid(grid_const[feature_x], grid_const[feature_y])
+# --- Constant Feature Grid ---
+f1_range = np.linspace(x_range[0], x_range[1], 40)
+f2_range = np.linspace(y_range[0], y_range[1], 40)
+F1, F2 = np.meshgrid(f1_range, f2_range)
+
 grid_const = pd.DataFrame({feature_x: F1.ravel(), feature_y: F2.ravel()})
 for col in feature_cols:
     if col not in [feature_x, feature_y]:
         grid_const[col] = 100.0 if col == "H1" else X_mean[col]
 grid_const = grid_const[feature_cols]
 
-# Free Mode (Synthetic as-is)
-grid_free = X_synth.copy()
-
-# Predict both modes
-def predict_df(df):
-    scaled = x_scaler.transform(df.astype(np.float32))
-    preds = model.predict(scaled, verbose=0)
-    return y_scaler.inverse_transform(preds)
-
 pred_const = predict_df(grid_const)[:, output_index].reshape(F1.shape)
-pred_free = predict_df(grid_free)[:, output_index]
-
-# -----------------------
-# 7️⃣ Real Predictions
-# -----------------------
 real_preds = predict_df(X_test)[:, output_index]
 actual_vals = y_actual_df[target_output].values
 
-# Filter test points by slider range
+# --- Free Synthetic Prediction (cached) ---
+if show_free_synth:
+    pred_free = predict_df(X_synth)[:, output_index]
+else:
+    pred_free = None
+
+# -----------------------
+# 7️⃣ Filtering for Sliders
+# -----------------------
 mask = (
     (X_test[feature_x] >= x_range[0]) & (X_test[feature_x] <= x_range[1]) &
     (X_test[feature_y] >= y_range[0]) & (X_test[feature_y] <= y_range[1])
@@ -124,7 +126,7 @@ filtered_actual = actual_vals[mask]
 filtered_pred = real_preds[mask]
 
 # -----------------------
-# 8️⃣ Compute Errors
+# 8️⃣ Error Metrics
 # -----------------------
 eps = 1e-8
 percent_errors = np.abs((filtered_actual - filtered_pred) / (filtered_actual + eps)) * 100
@@ -134,11 +136,11 @@ local_mape = np.mean(percent_errors)
 # -----------------------
 # 9️⃣ Shared Scale
 # -----------------------
-zmin = min(np.min(pred_const), np.min(pred_free), np.min(actual_vals))
-zmax = max(np.max(pred_const), np.max(pred_free), np.max(actual_vals))
+zmin = np.min([np.min(pred_const), np.min(real_preds)])
+zmax = np.max([np.max(pred_const), np.max(real_preds)])
 
 # -----------------------
-# 🔟 Real Data RSM
+# 🔟 RSM Plots
 # -----------------------
 fig_real = go.Figure(data=go.Contour(
     x=X_test[feature_x], y=X_test[feature_y], z=real_preds,
@@ -153,36 +155,24 @@ fig_real.add_trace(go.Scatter(
 ))
 fig_real.update_layout(title="🟩 Real Data RSM", xaxis_title=feature_x, yaxis_title=feature_y, template="plotly_white")
 
-# -----------------------
-# 11️⃣ Synthetic (Constant Features)
-# -----------------------
 fig_synth_const = go.Figure(data=go.Contour(
-    x=np.linspace(x_range[0], x_range[1], 60),
-    y=np.linspace(y_range[0], y_range[1], 60),
-    z=pred_const,
+    x=f1_range, y=f2_range, z=pred_const,
     colorscale="RdYlGn_r", zmin=zmin, zmax=zmax,
     colorbar=dict(title=f"{target_output}"), contours=dict(showlabels=True)
-))
-fig_synth_const.add_trace(go.Scatter(
-    x=filtered_X[feature_x], y=filtered_X[feature_y],
-    mode="markers", marker=dict(size=7, color="black", line=dict(width=1, color="white")),
-    text=[f"{target_output}: {val:.3f}" for val in filtered_pred],
-    name="Matched Points"
 ))
 fig_synth_const.update_layout(title="🟨 Synthetic RSM (Constant Features)", xaxis_title=feature_x, yaxis_title=feature_y, template="plotly_white")
 
-# -----------------------
-# 12️⃣ Synthetic (Free Features)
-# -----------------------
-fig_synth_free = go.Figure(data=go.Contour(
-    x=grid_free[feature_x], y=grid_free[feature_y], z=pred_free,
-    colorscale="RdYlGn_r", zmin=zmin, zmax=zmax,
-    colorbar=dict(title=f"{target_output}"), contours=dict(showlabels=True)
-))
-fig_synth_free.update_layout(title="🟦 Synthetic RSM (All Features Free)", xaxis_title=feature_x, yaxis_title=feature_y, template="plotly_white")
+# Free synthetic plot (optional)
+if show_free_synth:
+    fig_synth_free = go.Figure(data=go.Contour(
+        x=X_synth[feature_x], y=X_synth[feature_y], z=pred_free,
+        colorscale="RdYlGn_r", zmin=zmin, zmax=zmax,
+        colorbar=dict(title=f"{target_output}"), contours=dict(showlabels=True)
+    ))
+    fig_synth_free.update_layout(title="🟦 Synthetic RSM (All Features Free)", xaxis_title=feature_x, yaxis_title=feature_y, template="plotly_white")
 
 # -----------------------
-# 13️⃣ Layout Display
+# 11️⃣ Display Layout
 # -----------------------
 col1, col2 = st.columns(2)
 with col1:
@@ -190,10 +180,11 @@ with col1:
 with col2:
     st.plotly_chart(fig_synth_const, use_container_width=True)
 
-st.plotly_chart(fig_synth_free, use_container_width=True)
+if show_free_synth:
+    st.plotly_chart(fig_synth_free, use_container_width=True)
 
 # -----------------------
-# 14️⃣ Donut Charts
+# 12️⃣ Donut Charts
 # -----------------------
 col_d1, col_d2 = st.columns(2)
 with col_d1:
@@ -207,7 +198,7 @@ with col_d2:
     st.plotly_chart(fig_local, use_container_width=True)
 
 # -----------------------
-# 15️⃣ Data Table
+# 13️⃣ Data Table
 # -----------------------
 st.subheader("📋 Matched Data Points (Filtered by X–Y Range)")
 compare_df = pd.DataFrame({
