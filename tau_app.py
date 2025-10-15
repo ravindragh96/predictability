@@ -6,7 +6,6 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
-import plotly.express as px
 from scipy.spatial import cKDTree
 import tensorflow as tf
 import joblib
@@ -15,7 +14,7 @@ import joblib
 # 1️⃣ Setup
 # -----------------------
 st.set_page_config(page_title="Response Surface Modeling (RSM)", layout="wide")
-st.title("🎛️ Response Surface Modeling (RSM) — Real vs Synthetic Comparison")
+st.title("🎛️ Response Surface Modeling (RSM) — Real vs Synthetic (Constant & Free) Comparison")
 
 BASE_DIR = r"C:\Users\gantrav01\RD_predictability_11925"
 
@@ -70,6 +69,7 @@ synth_filtered = synth_df[
     (synth_df[feature_y] >= y_range[0]) & (synth_df[feature_y] <= y_range[1])
 ].reset_index(drop=True)
 
+# Nearest neighbors to match synthetic to real
 tree = cKDTree(real_df[[feature_x, feature_y]].values)
 distances, indices = tree.query(synth_filtered[[feature_x, feature_y]].values, k=1)
 valid_mask = distances < threshold
@@ -77,27 +77,27 @@ matched_real = real_df.iloc[indices[valid_mask]].reset_index(drop=True)
 matched_synth = synth_filtered.loc[valid_mask].reset_index(drop=True)
 
 # -----------------------
-# 6️⃣ Predict with Model
+# 6️⃣ Prediction Function
 # -----------------------
 def predict_ann(df):
-    scaled = x_scaler.transform(df[X_train.columns])
+    df_aligned = df[X_train.columns].copy()
+    scaled = x_scaler.transform(df_aligned.astype(np.float32))
     preds = model.predict(scaled, verbose=0)
     preds = y_scaler.inverse_transform(preds)
     return preds[:, y_train.columns.get_loc(target_option)]
 
-# Synthetic (constant mean)
+# Synthetic predictions
 X_mean = X_train.mean(numeric_only=True)
+
+# Constant mean setup
 grid = synth_filtered.copy()
 for c in X_train.columns:
     if c not in [feature_x, feature_y]:
         grid[c] = X_mean[c]
 synth_const_pred = predict_ann(grid)
 
-# Synthetic (free as-is)
+# Free synthetic setup
 synth_free_pred = predict_ann(synth_filtered)
-
-# Real (actual features)
-real_pred = predict_ann(real_df)
 
 # -----------------------
 # 7️⃣ Match Values & Errors
@@ -110,87 +110,86 @@ mape = np.mean(percent_error)
 local_mape = np.mean(percent_error)
 
 # -----------------------
-# 8️⃣ Shared Color Scale
+# 8️⃣ RSM Surface + Donuts Layout
 # -----------------------
-zmin = min(y_real.min(), y_synth.min(), synth_const_pred.min(), synth_free_pred.min())
-zmax = max(y_real.max(), y_synth.max(), synth_const_pred.max(), synth_free_pred.max())
+st.markdown("## 🌀 Response Surface & Error Metrics")
 
-# -----------------------
-# 9️⃣ Plots
-# -----------------------
-st.markdown("## 🎨 Scatter Plots Comparison")
+col_rsm, col_donuts = st.columns([2.5, 1])
 
-col1, col2, col3 = st.columns(3)
+with col_rsm:
+    f1_range = np.linspace(x_range[0], x_range[1], 80)
+    f2_range = np.linspace(y_range[0], y_range[1], 80)
+    F1, F2 = np.meshgrid(f1_range, f2_range)
 
-# Synthetic (constant)
-with col1:
-    st.subheader("🟡 Synthetic (Constant Mean)")
-    fig1 = px.scatter(
-        x=synth_filtered[feature_x], y=synth_filtered[feature_y],
-        color=synth_const_pred, color_continuous_scale="RdYlGn_r",
-        range_color=[zmin, zmax], title=f"{target_option} — Constant Features"
+    grid_surface = pd.DataFrame({feature_x: F1.ravel(), feature_y: F2.ravel()})
+    for c in X_train.columns:
+        if c not in [feature_x, feature_y]:
+            grid_surface[c] = X_mean[c]
+    grid_pred = predict_ann(grid_surface).reshape(F1.shape)
+
+    # Pick random real points
+    filtered_real = real_df[
+        (real_df[feature_x] >= x_range[0]) & (real_df[feature_x] <= x_range[1]) &
+        (real_df[feature_y] >= y_range[0]) & (real_df[feature_y] <= y_range[1])
+    ]
+    sampled_real = filtered_real.sample(n=min(5, len(filtered_real)), random_state=42) if len(filtered_real) > 0 else pd.DataFrame()
+
+    if not sampled_real.empty:
+        # Predicted under both conditions
+        sampled_real_pred_const = predict_ann(sampled_real.assign(**{c: X_mean[c] for c in X_train.columns if c not in [feature_x, feature_y]}))
+        sampled_real_pred_free = predict_ann(sampled_real)
+
+        sampled_real["Predicted_Synth_Constant"] = sampled_real_pred_const
+        sampled_real["Predicted_Synth_Free"] = sampled_real_pred_free
+        sampled_real["Abs_Error_Const"] = np.abs(sampled_real[target_option] - sampled_real_pred_const)
+        sampled_real["Abs_Error_Free"] = np.abs(sampled_real[target_option] - sampled_real_pred_free)
+
+    # ---- RSM Plot ----
+    fig_rsm = go.Figure(data=go.Contour(
+        z=grid_pred, x=f1_range, y=f2_range,
+        colorscale="RdYlGn_r", ncontours=25,
+        colorbar=dict(title=f"{target_option}"),
+        contours=dict(showlabels=True, labelfont=dict(size=12, color="black"))
+    ))
+
+    fig_rsm.add_trace(go.Scatter(
+        x=synth_filtered[feature_x],
+        y=synth_filtered[feature_y],
+        mode="markers",
+        marker=dict(size=6, color="white", line=dict(width=1, color="black")),
+        name="Synthetic Points"
+    ))
+
+    if not sampled_real.empty:
+        fig_rsm.add_trace(go.Scatter(
+            x=sampled_real[feature_x],
+            y=sampled_real[feature_y],
+            mode="markers",
+            marker=dict(size=11, color="blue", symbol="star", line=dict(width=2, color="black")),
+            name="Highlighted Real Points",
+            text=[
+                f"<b>{feature_x}</b>: {row[feature_x]:.2f}<br>"
+                f"<b>{feature_y}</b>: {row[feature_y]:.2f}<br>"
+                f"<b>Actual {target_option}</b>: {row[target_option]:.2f}<br>"
+                f"<b>Predicted (Mean-based)</b>: {row['Predicted_Synth_Constant']:.2f}<br>"
+                f"<b>Predicted (Free)</b>: {row['Predicted_Synth_Free']:.2f}<br>"
+                f"<b>Error (Mean-based)</b>: {row['Abs_Error_Const']:.2f}<br>"
+                f"<b>Error (Free)</b>: {row['Abs_Error_Free']:.2f}"
+                for _, row in sampled_real.iterrows()
+            ],
+            hoverinfo="text"
+        ))
+
+    fig_rsm.update_layout(
+        title=f"RSM Surface — {target_option} vs {feature_x}, {feature_y}",
+        xaxis_title=feature_x,
+        yaxis_title=feature_y,
+        template="plotly_white",
+        height=600
     )
-    fig1.update_traces(marker=dict(size=6, line=dict(width=0.5, color='black')))
-    st.plotly_chart(fig1, use_container_width=True)
+    st.plotly_chart(fig_rsm, use_container_width=True)
 
-# Synthetic (free)
-with col2:
-    st.subheader("🔵 Synthetic (Free Features)")
-    fig2 = px.scatter(
-        x=synth_filtered[feature_x], y=synth_filtered[feature_y],
-        color=synth_free_pred, color_continuous_scale="RdYlGn_r",
-        range_color=[zmin, zmax], title=f"{target_option} — Free Features"
-    )
-    fig2.update_traces(marker=dict(size=6, line=dict(width=0.5, color='black')))
-    st.plotly_chart(fig2, use_container_width=True)
-
-# Real
-with col3:
-    st.subheader("🟢 Real Data (Actual)")
-    fig3 = px.scatter(
-        x=real_df[feature_x], y=real_df[feature_y],
-        color=real_df[target_option], color_continuous_scale="RdYlGn_r",
-        range_color=[zmin, zmax], title=f"{target_option} — Actual"
-    )
-    fig3.update_traces(marker=dict(size=6, symbol="diamond", line=dict(width=0.5, color='black')))
-    st.plotly_chart(fig3, use_container_width=True)
-
-# -----------------------
-# 🔟 Response Surface Plot
-# -----------------------
-st.markdown("## 🌀 Response Surface (Predicted Surface)")
-f1_range = np.linspace(x_range[0], x_range[1], 80)
-f2_range = np.linspace(y_range[0], y_range[1], 80)
-F1, F2 = np.meshgrid(f1_range, f2_range)
-
-grid_surface = pd.DataFrame({feature_x: F1.ravel(), feature_y: F2.ravel()})
-for c in X_train.columns:
-    if c not in [feature_x, feature_y]:
-        grid_surface[c] = X_mean[c]
-grid_pred = predict_ann(grid_surface).reshape(F1.shape)
-
-fig_rsm = go.Figure(data=go.Contour(
-    z=grid_pred, x=f1_range, y=f2_range, colorscale="RdYlGn_r",
-    ncontours=25, colorbar=dict(title=f"{target_option}"),
-    contours=dict(showlabels=True, labelfont=dict(size=12, color="black"))
-))
-fig_rsm.add_trace(go.Scatter(
-    x=synth_filtered[feature_x], y=synth_filtered[feature_y],
-    mode="markers", marker=dict(size=6, color="white", line=dict(width=1, color="black")),
-    name="Synthetic Points"
-))
-fig_rsm.update_layout(
-    title=f"RSM Surface — {target_option} vs {feature_x}, {feature_y}",
-    xaxis_title=feature_x, yaxis_title=feature_y, template="plotly_white"
-)
-st.plotly_chart(fig_rsm, use_container_width=True)
-
-# -----------------------
-# 11️⃣ Donut Charts & Table
-# -----------------------
-col4, col5 = st.columns(2)
-
-with col4:
+with col_donuts:
     st.subheader("📊 Error Summary")
     donut_cols = st.columns(2)
     with donut_cols[0]:
@@ -210,23 +209,30 @@ with col4:
         fig_local.update_layout(title_text=f"Local Error: {local_mape:.2f}%", showlegend=False, height=250)
         st.plotly_chart(fig_local, use_container_width=True)
 
-with col5:
-    st.subheader("🔍 Matched Data Points")
-    comparison_df = pd.DataFrame({
-        feature_x: matched_synth[feature_x],
-        feature_y: matched_synth[feature_y],
-        f"Synthetic_{target_option}": y_synth,
-        f"Actual_{target_option}": y_real,
-        "Abs_Error": abs_error,
-        "Percent_Error": percent_error
-    }).sort_values("Percent_Error")
-    st.dataframe(comparison_df, use_container_width=True, height=300)
+# -----------------------
+# 9️⃣ Comparison Table
+# -----------------------
+st.subheader("🔍 Matched Data Points (Real vs Synthetic)")
+comparison_df = pd.DataFrame({
+    feature_x: matched_synth[feature_x],
+    feature_y: matched_synth[feature_y],
+    f"Synthetic_{target_option}": y_synth,
+    f"Actual_{target_option}": y_real,
+    "Abs_Error": abs_error,
+    "Percent_Error": percent_error
+}).sort_values("Percent_Error")
 
+st.dataframe(comparison_df, use_container_width=True, height=300)
+
+# -----------------------
+# 🔟 Info Summary
+# -----------------------
 st.info(f"""
 **Target:** `{target_option}` | **X:** `{feature_x}` | **Y:** `{feature_y}`  
-**Threshold:** ±{threshold_percent:.1f}% feature range | **Matches Found:** {len(matched_synth)}  
+**Threshold:** ±{threshold_percent:.1f}% | **Matches Found:** {len(matched_synth)}  
 **Global MAPE:** {mape:.2f}% | **Local Error:** {local_mape:.2f}%  
-**All other features fixed at their mean values for the contour surface.**
+All other features are fixed at their mean values for the contour surface.  
+⭐ Highlighted blue points show actual T1 and predicted T1 (both constant & free).  
 """)
 
 
