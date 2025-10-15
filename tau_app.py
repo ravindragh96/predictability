@@ -140,22 +140,27 @@ with col1:
     st.subheader("🟡 Synthetic — Constant Mean")
     fig1 = px.scatter(
         x=synth_filtered[feature_x], y=synth_filtered[feature_y],
-        color=synth_const_pred, color_continuous_scale="RdYlGn_r",
+        color=synth_const_pred,
+        color_continuous_scale="RdYlGn_r",
         range_color=[zmin, zmax],
         labels={"x": feature_x, "y": feature_y, "color": target_option}
     )
     fig1.update_traces(marker=dict(size=6, line=dict(width=0.5, color="black")))
-    # Highlight sampled real points (⭐)
+    # Highlight sampled real points (⭐), position top for stars to avoid overlap
     fig1.add_trace(go.Scatter(
         x=sampled_real[feature_x], y=sampled_real[feature_y],
-        mode="markers",
+        mode="markers+text",
         marker=dict(size=14, color="blue", symbol="star", line=dict(width=1, color="black")),
+        text=["★"]*len(sampled_real),
+        textposition="top center",
         customdata=sampled_real[[target_option, "Pred_Const", "Pred_Free"]].values,
         hovertemplate=hover_card,
         name="Sampled Real"
     ))
-    fig1.update_layout(xaxis=dict(range=[x_range[0], x_range[1]]),
-                       yaxis=dict(range=[y_range[0], y_range[1]]))
+    fig1.update_layout(
+        xaxis=dict(range=[x_range[0], x_range[1]], showgrid=True, zeroline=False),
+        yaxis=dict(range=[y_range[0], y_range[1]], showgrid=True, zeroline=False)
+    )
     st.plotly_chart(fig1, use_container_width=True)
 
 with col2:
@@ -167,17 +172,20 @@ with col2:
         labels={"x": feature_x, "y": feature_y, "color": target_option}
     )
     fig2.update_traces(marker=dict(size=6, line=dict(width=0.5, color="black")))
-    # Add the same 10 stars
     fig2.add_trace(go.Scatter(
         x=sampled_real[feature_x], y=sampled_real[feature_y],
-        mode="markers",
+        mode="markers+text",
         marker=dict(size=14, color="blue", symbol="star", line=dict(width=1, color="black")),
+        text=["★"]*len(sampled_real),
+        textposition="top center",
         customdata=sampled_real[[target_option, "Pred_Const", "Pred_Free"]].values,
         hovertemplate=hover_card,
         name="Sampled Real"
     ))
-    fig2.update_layout(xaxis=dict(range=[x_range[0], x_range[1]]),
-                       yaxis=dict(range=[y_range[0], y_range[1]]))
+    fig2.update_layout(
+        xaxis=dict(range=[x_range[0], x_range[1]], showgrid=True, zeroline=False),
+        yaxis=dict(range=[y_range[0], y_range[1]], showgrid=True, zeroline=False)
+    )
     st.plotly_chart(fig2, use_container_width=True)
 
 # -----------------------
@@ -201,35 +209,32 @@ with col3:
 
     fig_rsm = go.Figure()
 
-    # Contour surface
+    # Consistent colorscale & zmin/zmax with scatter
     fig_rsm.add_trace(go.Contour(
         z=grid_pred, x=f1_range, y=f2_range,
         colorscale="RdYlGn_r", zmin=zmin, zmax=zmax,
-        coloraxis="coloraxis", ncontours=30
+        coloraxis="coloraxis", ncontours=30, contours_coloring='fill',
+        line_width=1, showscale=True
     ))
-
-    # Overlay same 10 validation points (⭐)
     fig_rsm.add_trace(go.Scatter(
         x=sampled_real[feature_x], y=sampled_real[feature_y],
-        mode="markers",
+        mode="markers+text",
         marker=dict(size=14, color="blue", symbol="star", line=dict(width=1, color="black")),
+        text=["★"]*len(sampled_real),
+        textposition="top center",
         customdata=sampled_real[[target_option, "Pred_Const", "Pred_Free"]].values,
         hovertemplate=hover_card,
         name="Sampled Real (Validation)"
     ))
-
-    # Fixed colorbar: pass title as dict to avoid attribute errors
     fig_rsm.update_layout(
         coloraxis_colorbar=dict(
             title=dict(text=target_option),
             ticks="outside",
-            tickfont=dict(size=11),
-            len=0.8,
-            x=1.05
+            tickfont=dict(size=11), len=0.8, x=1.05,
         ),
         margin=dict(l=40, r=160, t=50, b=50),
-        xaxis=dict(title=feature_x, range=[x_range[0], x_range[1]]),
-        yaxis=dict(title=feature_y, range=[y_range[0], y_range[1]]),
+        xaxis=dict(title=feature_x, range=[x_range[0], x_range[1]], showgrid=True, zeroline=False),
+        yaxis=dict(title=feature_y, range=[y_range[0], y_range[1]], showgrid=True, zeroline=False),
         title=dict(text=f"RSM Surface — {target_option}", x=0.45),
         height=520
     )
@@ -244,15 +249,20 @@ with col4:
         range_color=[zmin, zmax]
     )
     fig_real.update_traces(marker=dict(size=6, symbol="diamond", line=dict(width=0.5, color="black")))
-    # Highlight same 10 stars
     fig_real.add_trace(go.Scatter(
         x=sampled_real[feature_x], y=sampled_real[feature_y],
-        mode="markers",
+        mode="markers+text",
         marker=dict(size=14, color="blue", symbol="star", line=dict(width=1, color="black")),
+        text=["★"]*len(sampled_real),
+        textposition="top center",
         customdata=sampled_real[[target_option, "Pred_Const", "Pred_Free"]].values,
         hovertemplate=hover_card,
         name="Sampled Real"
     ))
+    fig_real.update_layout(
+        xaxis=dict(range=[x_range[0], x_range[1]], showgrid=True, zeroline=False),
+        yaxis=dict(range=[y_range[0], y_range[1]], showgrid=True, zeroline=False)
+    )
     st.plotly_chart(fig_real, use_container_width=True)
 
 # -----------------------
@@ -271,16 +281,16 @@ with col5:
             labels=["MAPE (%)", "Accuracy (%)"],
             values=[mape_const, 100 - mape_const],
             hole=0.65)])
-        fig_d1.update_layout(title=dict(text=f"Const: {mape_const:.2f}%", x=0.5),
-                             showlegend=False, height=240, margin=dict(t=40, b=0))
+        fig_d1.update_layout(title=dict(text=f"Const: {mape_const:.2f}%", x=0.1),
+                             showlegend=False, height=230, margin=dict(t=40, b=0))
         st.plotly_chart(fig_d1, use_container_width=True)
     with dcols[1]:
         fig_d2 = go.Figure(data=[go.Pie(
             labels=["MAPE (%)", "Accuracy (%)"],
             values=[mape_free, 100 - mape_free],
             hole=0.65)])
-        fig_d2.update_layout(title=dict(text=f"Free: {mape_free:.2f}%", x=0.5),
-                             showlegend=False, height=240, margin=dict(t=40, b=0))
+        fig_d2.update_layout(title=dict(text=f"Free: {mape_free:.2f}%", x=0.1),
+                             showlegend=False, height=230, margin=dict(t=40, b=0))
         st.plotly_chart(fig_d2, use_container_width=True)
 
 with col6:
