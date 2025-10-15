@@ -262,7 +262,11 @@ with colD2:
 # ✅ Footer Summary
 # -----------------------
 st.info(f"""
-**Target:** `{target_option}` | **X:** `{fea_
+**Target:** `{target_option}` | **X:** `{feature_x}` | **Y:** `{feature_y}`  
+**Threshold:** ±{threshold_percent:.1f}% feature range | **Matches Found:** {len(matched_synth)}  
+**Global MAPE:** {mape_const:.2f}% | **Local Error:** {mape_free:.2f}%  
+**All other features fixed at their mean values for the contour surface.**
+""")
 
 
 
