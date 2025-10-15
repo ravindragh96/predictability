@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python
 # coding: utf-8
 
@@ -71,12 +70,6 @@ synth_filtered = synth_df[
     (synth_df[feature_y] >= y_range[0]) & (synth_df[feature_y] <= y_range[1])
 ].reset_index(drop=True)
 
-tree = cKDTree(real_df[[feature_x, feature_y]].values)
-distances, indices = tree.query(synth_filtered[[feature_x, feature_y]].values, k=1)
-valid_mask = distances < threshold
-matched_real = real_df.iloc[indices[valid_mask]].reset_index(drop=True)
-matched_synth = synth_filtered.loc[valid_mask].reset_index(drop=True)
-
 # -----------------------
 # 6️⃣ ANN Prediction Function
 # -----------------------
@@ -87,11 +80,11 @@ def predict_ann(df):
     preds = y_scaler.inverse_transform(preds)
     return preds[:, y_train.columns.get_loc(target_option)]
 
-# Mean and std for contrast
+# Mean & std for variation
 X_mean = X_train.mean(numeric_only=True)
 X_std = X_train.std(numeric_only=True)
 
-# Constant setup — vary features slightly around mean (±1 std)
+# Constant mean ± std setup
 grid_const = synth_filtered.copy()
 for c in X_train.columns:
     if c not in [feature_x, feature_y]:
@@ -100,109 +93,111 @@ for c in X_train.columns:
         )
 synth_const_pred = predict_ann(grid_const)
 
-# Free setup — use original values
+# Free setup
 synth_free_pred = predict_ann(synth_filtered)
 
 # -----------------------
-# 7️⃣ Scatter Plots (3 Panels)
+# 7️⃣ Random Real Points + Predictions
 # -----------------------
-st.markdown("## 🎨 Synthetic vs Real — Scatter Visualization")
+filtered_real = real_df[
+    (real_df[feature_x] >= x_range[0]) & (real_df[feature_x] <= x_range[1]) &
+    (real_df[feature_y] >= y_range[0]) & (real_df[feature_y] <= y_range[1])
+]
+sampled_real = filtered_real.sample(n=min(5, len(filtered_real)), random_state=42) if len(filtered_real) > 0 else pd.DataFrame()
+
+if not sampled_real.empty:
+    # Predict for real points under both setups
+    sampled_real_pred_const = predict_ann(sampled_real.assign(**{c: X_mean[c] for c in X_train.columns if c not in [feature_x, feature_y]}))
+    sampled_real_pred_free = predict_ann(sampled_real)
+
+    sampled_real["Pred_Const"] = sampled_real_pred_const
+    sampled_real["Pred_Free"] = sampled_real_pred_free
+    sampled_real["Error_Const_%"] = np.abs(sampled_real[target_option] - sampled_real_pred_const) / (np.abs(sampled_real[target_option]) + 1e-8) * 100
+    sampled_real["Error_Free_%"] = np.abs(sampled_real[target_option] - sampled_real_pred_free) / (np.abs(sampled_real[target_option]) + 1e-8) * 100
+
+# -----------------------
+# 8️⃣ Scatter Plots with Hover Info
+# -----------------------
+st.markdown("## 🎨 Scatter Plots — Synthetic vs Real Comparison")
 
 zmin = min(synth_const_pred.min(), synth_free_pred.min(), real_df[target_option].min())
 zmax = max(synth_const_pred.max(), synth_free_pred.max(), real_df[target_option].max())
 
 col1, col2, col3 = st.columns(3)
 
+def add_hover_labels(fig, df, xcol, ycol, zvals, title, color):
+    hover_texts = [
+        f"<b>{xcol}</b>: {x:.3f}<br>"
+        f"<b>{ycol}</b>: {y:.3f}<br>"
+        f"<b>{target_option}</b>: {z:.3f}"
+        for x, y, z in zip(df[xcol], df[ycol], zvals)
+    ]
+    fig.update_traces(hovertemplate=None, hoverinfo='skip')
+    fig.add_trace(go.Scatter(
+        x=df[xcol], y=df[ycol],
+        mode="markers",
+        marker=dict(size=6, color=color, line=dict(width=0.5, color="black")),
+        text=hover_texts,
+        hoverinfo="text",
+        name=title
+    ))
+    return fig
+
 with col1:
-    st.subheader("🟡 Synthetic (Constant Mean ±Std)")
-    fig1 = px.scatter(
-        synth_filtered, x=feature_x, y=feature_y,
-        color=synth_const_pred, color_continuous_scale="RdYlGn_r",
-        range_color=[zmin, zmax], title=f"{target_option} (Mean ±Std)"
-    )
-    fig1.update_traces(marker=dict(size=6, line=dict(width=0.5, color='black')))
+    st.subheader("🟡 Synthetic (Mean ± Std)")
+    fig1 = px.scatter(synth_filtered, x=feature_x, y=feature_y,
+                      color=synth_const_pred, color_continuous_scale="RdYlGn_r",
+                      range_color=[zmin, zmax])
+    fig1 = add_hover_labels(fig1, synth_filtered, feature_x, feature_y, synth_const_pred, "Synthetic Const", synth_const_pred)
+    # Add random stars
+    if not sampled_real.empty:
+        fig1.add_trace(go.Scatter(
+            x=sampled_real[feature_x], y=sampled_real[feature_y],
+            mode="markers+text",
+            marker=dict(size=11, color="blue", symbol="star", line=dict(width=1.5, color="black")),
+            text=[
+                f"<b>{feature_x}</b>: {row[feature_x]:.2f}<br>"
+                f"<b>{feature_y}</b>: {row[feature_y]:.2f}<br>"
+                f"<b>Actual {target_option}</b>: {row[target_option]:.2f}<br>"
+                f"<b>Predicted (Mean±Std)</b>: {row['Pred_Const']:.2f}<br>"
+                f"<b>Error (%)</b>: {row['Error_Const_%']:.2f}"
+                for _, row in sampled_real.iterrows()
+            ],
+            hoverinfo="text",
+            name="Sampled Real Points"
+        ))
     st.plotly_chart(fig1, use_container_width=True)
 
 with col2:
     st.subheader("🔵 Synthetic (Free Features)")
-    fig2 = px.scatter(
-        synth_filtered, x=feature_x, y=feature_y,
-        color=synth_free_pred, color_continuous_scale="RdYlGn_r",
-        range_color=[zmin, zmax], title=f"{target_option} (Free Features)"
-    )
-    fig2.update_traces(marker=dict(size=6, line=dict(width=0.5, color='black')))
+    fig2 = px.scatter(synth_filtered, x=feature_x, y=feature_y,
+                      color=synth_free_pred, color_continuous_scale="RdYlGn_r",
+                      range_color=[zmin, zmax])
+    fig2 = add_hover_labels(fig2, synth_filtered, feature_x, feature_y, synth_free_pred, "Synthetic Free", synth_free_pred)
+    if not sampled_real.empty:
+        fig2.add_trace(go.Scatter(
+            x=sampled_real[feature_x], y=sampled_real[feature_y],
+            mode="markers+text",
+            marker=dict(size=11, color="blue", symbol="star", line=dict(width=1.5, color="black")),
+            text=[
+                f"<b>{feature_x}</b>: {row[feature_x]:.2f}<br>"
+                f"<b>{feature_y}</b>: {row[feature_y]:.2f}<br>"
+                f"<b>Actual {target_option}</b>: {row[target_option]:.2f}<br>"
+                f"<b>Predicted (Free)</b>: {row['Pred_Free']:.2f}<br>"
+                f"<b>Error (%)</b>: {row['Error_Free_%']:.2f}"
+                for _, row in sampled_real.iterrows()
+            ],
+            hoverinfo="text"
+        ))
     st.plotly_chart(fig2, use_container_width=True)
 
 with col3:
     st.subheader("🟢 Real Data (Actual)")
-    fig3 = px.scatter(
-        real_df, x=feature_x, y=feature_y,
-        color=real_df[target_option], color_continuous_scale="RdYlGn_r",
-        range_color=[zmin, zmax], title=f"Actual {target_option}"
-    )
-    fig3.update_traces(marker=dict(size=6, symbol="diamond", line=dict(width=0.5, color="black")))
+    fig3 = px.scatter(real_df, x=feature_x, y=feature_y,
+                      color=real_df[target_option], color_continuous_scale="RdYlGn_r",
+                      range_color=[zmin, zmax])
+    fig3 = add_hover_labels(fig3, real_df, feature_x, feature_y, real_df[target_option], "Real", real_df[target_option])
     st.plotly_chart(fig3, use_container_width=True)
-
-# -----------------------
-# 8️⃣ Response Surface + Donut Charts
-# -----------------------
-st.markdown("## 🌀 Response Surface & Error Summary")
-
-col_rsm, col_donuts = st.columns([2.5, 1])
-
-with col_rsm:
-    f1_range = np.linspace(x_range[0], x_range[1], 80)
-    f2_range = np.linspace(y_range[0], y_range[1], 80)
-    F1, F2 = np.meshgrid(f1_range, f2_range)
-
-    grid_surface = pd.DataFrame({feature_x: F1.ravel(), feature_y: F2.ravel()})
-    for c in X_train.columns:
-        if c not in [feature_x, feature_y]:
-            grid_surface[c] = X_mean[c]
-    grid_pred = predict_ann(grid_surface).reshape(F1.shape)
-
-    fig_rsm = go.Figure(data=go.Contour(
-        z=grid_pred, x=f1_range, y=f2_range,
-        colorscale="RdYlGn_r", ncontours=25,
-        colorbar=dict(title=f"{target_option}"),
-        contours=dict(showlabels=True, labelfont=dict(size=12, color="black"))
-    ))
-    st.plotly_chart(fig_rsm, use_container_width=True)
-
-# Donut charts
-with col_donuts:
-    mape = np.mean(np.abs((matched_real[target_option].values - matched_synth[target_option].values) /
-                          (matched_real[target_option].values + 1e-8)) * 100)
-    local_mape = mape
-
-    fig_mape = go.Figure(data=[go.Pie(labels=['MAPE (%)', 'Accuracy (%)'],
-                                      values=[mape, 100 - mape],
-                                      hole=0.6, marker_colors=['#EF553B', '#00CC96'],
-                                      textinfo='label+percent')])
-    fig_mape.update_layout(title=dict(text=f"Global MAPE: {mape:.2f}%", x=0.5),
-                           showlegend=False, height=250)
-    st.plotly_chart(fig_mape, use_container_width=True)
-
-    fig_local = go.Figure(data=[go.Pie(labels=['Local Error (%)', 'Accuracy (%)'],
-                                       values=[local_mape, 100 - local_mape],
-                                       hole=0.6, marker_colors=['#FFA15A', '#19D3F3'],
-                                       textinfo='label+percent')])
-    fig_local.update_layout(title=dict(text=f"Local Error: {local_mape:.2f}%", x=0.5),
-                            showlegend=False, height=250)
-    st.plotly_chart(fig_local, use_container_width=True)
-
-# -----------------------
-# 9️⃣ Summary Info
-# -----------------------
-st.info(f"""
-**Target:** `{target_option}` | **X:** `{feature_x}` | **Y:** `{feature_y}`  
-**Threshold:** ±{threshold_percent:.1f}% | **Synthetic Points:** {len(synth_filtered)}  
-✅ Now you can visually compare:  
-- Left: Mean ±Std (constant features)  
-- Middle: Free features  
-- Right: Actual data  
-to understand how feature variation affects ANN-predicted {target_option}.
-""")
 
 
 
