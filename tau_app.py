@@ -10,6 +10,17 @@ import plotly.express as px
 from scipy.spatial import cKDTree
 import tensorflow as tf
 import joblib
+import plotly.io as pio
+
+# -----------------------
+# 🔧 Global Styling
+# -----------------------
+pio.templates.default = "plotly_white"
+pio.templates["plotly_white"]["layout"]["coloraxis"]["colorbar"] = {
+    "titlefont": {"size": 11},
+    "tickfont": {"size": 10},
+    "bgcolor": "rgba(255,255,255,0.5)"
+}
 
 # -----------------------
 # 1️⃣ Setup
@@ -142,7 +153,11 @@ with col1:
     ))
     fig1.update_layout(
         margin=dict(l=40, r=80, t=50, b=40),
-        coloraxis_colorbar=dict(title=target_option, titleside="right", x=1.05, len=0.8, titlefont_size=12, tickfont_size=11)
+        coloraxis_colorbar=dict(
+            title=dict(text=target_option, side="right"),
+            x=1.05,
+            len=0.8
+        )
     )
     st.plotly_chart(fig1, use_container_width=True)
 
@@ -163,7 +178,11 @@ with col2:
     ))
     fig2.update_layout(
         margin=dict(l=40, r=80, t=50, b=40),
-        coloraxis_colorbar=dict(title=target_option, titleside="right", x=1.05, len=0.8, titlefont_size=12, tickfont_size=11)
+        coloraxis_colorbar=dict(
+            title=dict(text=target_option, side="right"),
+            x=1.05,
+            len=0.8
+        )
     )
     st.plotly_chart(fig2, use_container_width=True)
 
@@ -184,7 +203,11 @@ with col3:
     ))
     fig3.update_layout(
         margin=dict(l=40, r=80, t=50, b=40),
-        coloraxis_colorbar=dict(title=target_option, titleside="right", x=1.05, len=0.8, titlefont_size=12, tickfont_size=11)
+        coloraxis_colorbar=dict(
+            title=dict(text=target_option, side="right"),
+            x=1.05,
+            len=0.8
+        )
     )
     st.plotly_chart(fig3, use_container_width=True)
 
@@ -192,7 +215,6 @@ with col3:
 # 🌀 RSM Plot
 # -----------------------
 st.markdown("## 🌀 Response Surface (Predicted Surface)")
-
 f1_range = np.linspace(x_range[0], x_range[1], 80)
 f2_range = np.linspace(y_range[0], y_range[1], 80)
 F1, F2 = np.meshgrid(f1_range, f2_range)
@@ -204,7 +226,11 @@ grid_pred = predict_ann(grid_surface).reshape(F1.shape)
 
 fig_rsm = go.Figure(data=go.Contour(
     z=grid_pred, x=f1_range, y=f2_range, colorscale="RdYlGn_r",
-    ncontours=25, colorbar=dict(title=target_option, x=1.05, len=0.8),
+    ncontours=25, colorbar=dict(
+        title=dict(text=target_option, side="right"),
+        x=1.05,
+        len=0.8
+    ),
     contours=dict(showlabels=True, labelfont=dict(size=12, color="black"))
 ))
 fig_rsm.add_trace(go.Scatter(
