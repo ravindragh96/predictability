@@ -5,8 +5,8 @@ import os
 import numpy as np
 import pandas as pd
 import streamlit as st
-import plotly.express as px
 import plotly.graph_objects as go
+import plotly.express as px
 from scipy.spatial import cKDTree
 import tensorflow as tf
 import joblib
@@ -15,7 +15,7 @@ import joblib
 # 1️⃣ Setup
 # -----------------------
 st.set_page_config(page_title="Response Surface Modeling (RSM)", layout="wide")
-st.title("🎛️ Response Surface Modeling (RSM) — Real vs Synthetic Comparison (Optimized)")
+st.title("🎛️ Response Surface Modeling (RSM) — Real vs Synthetic Comparison")
 
 BASE_DIR = r"C:\Users\gantrav01\RD_predictability_11925"
 
@@ -28,49 +28,19 @@ X_SCALER_PATH = os.path.join(BASE_DIR, "x_eta_scaler.pkl")
 Y_SCALER_PATH = os.path.join(BASE_DIR, "y_eta_scaler.pkl")
 
 # -----------------------
-# 2️⃣ Cache Loading
+# 2️⃣ Load Data & Model
 # -----------------------
-@st.cache_resource
-def load_model_and_scalers():
-    model = tf.keras.models.load_model(MODEL_PATH, compile=False)
-    x_scaler = joblib.load(X_SCALER_PATH)
-    y_scaler = joblib.load(Y_SCALER_PATH)
-    return model, x_scaler, y_scaler
+X_train = pd.read_excel(TRAIN_X_PATH)
+y_train = pd.read_excel(TRAIN_Y_PATH)
+real_df = pd.read_excel(REAL_PATH)
+synth_df = pd.read_excel(SYNTH_PATH)
 
-@st.cache_data
-def load_datasets():
-    X_train = pd.read_excel(TRAIN_X_PATH)
-    y_train = pd.read_excel(TRAIN_Y_PATH)
-    real_df = pd.read_excel(REAL_PATH)
-    synth_df = pd.read_excel(SYNTH_PATH)
-    return X_train, y_train, real_df, synth_df
-
-model, x_scaler, y_scaler = load_model_and_scalers()
-X_train, y_train, real_df, synth_df = load_datasets()
+model = tf.keras.models.load_model(MODEL_PATH, compile=False)
+x_scaler = joblib.load(X_SCALER_PATH)
+y_scaler = joblib.load(Y_SCALER_PATH)
 
 # -----------------------
-# 3️⃣ Helper Functions
-# -----------------------
-def align_features(df, reference_df, fill_mean=True):
-    """Ensure df has same columns & order as training data"""
-    ref_cols = reference_df.columns
-    df_aligned = pd.DataFrame()
-    for col in ref_cols:
-        if col in df.columns:
-            df_aligned[col] = df[col]
-        else:
-            df_aligned[col] = reference_df[col].mean() if fill_mean else 0.0
-    return df_aligned[ref_cols]
-
-def predict_ann(df):
-    df_aligned = align_features(df, X_train)
-    scaled = x_scaler.transform(df_aligned.astype(np.float32))
-    preds = model.predict(scaled, verbose=0)
-    preds = y_scaler.inverse_transform(preds)
-    return preds[:, y_train.columns.get_loc(target_option)]
-
-# -----------------------
-# 4️⃣ Sidebar Controls
+# 3️⃣ Sidebar Controls
 # -----------------------
 feature_cols = list(X_train.columns)
 target_cols = list(y_train.columns)
@@ -81,7 +51,7 @@ feature_y = st.sidebar.selectbox("Feature Y", [c for c in feature_cols if c != f
 target_option = st.sidebar.selectbox("Target Output", target_cols)
 
 # -----------------------
-# 5️⃣ Range Controls
+# 4️⃣ Range & Matching Setup
 # -----------------------
 x_min, x_max = synth_df[feature_x].min(), synth_df[feature_x].max()
 y_min, y_max = synth_df[feature_y].min(), synth_df[feature_y].max()
@@ -93,7 +63,7 @@ threshold_percent = st.sidebar.slider("Matching tolerance (% of feature range)",
 threshold = ((x_max - x_min) + (y_max - y_min)) / 2 * (threshold_percent / 100)
 
 # -----------------------
-# 6️⃣ Filter & Match Data
+# 5️⃣ Filter Data
 # -----------------------
 synth_filtered = synth_df[
     (synth_df[feature_x] >= x_range[0]) & (synth_df[feature_x] <= x_range[1]) &
@@ -107,47 +77,52 @@ matched_real = real_df.iloc[indices[valid_mask]].reset_index(drop=True)
 matched_synth = synth_filtered.loc[valid_mask].reset_index(drop=True)
 
 # -----------------------
-# 7️⃣ Predictions
+# 6️⃣ Predict with Model
 # -----------------------
-X_mean = X_train.mean(numeric_only=True)
+def predict_ann(df):
+    scaled = x_scaler.transform(df[X_train.columns])
+    preds = model.predict(scaled, verbose=0)
+    preds = y_scaler.inverse_transform(preds)
+    return preds[:, y_train.columns.get_loc(target_option)]
 
-# Synthetic (constant features)
+# Synthetic (constant mean)
+X_mean = X_train.mean(numeric_only=True)
 grid = synth_filtered.copy()
 for c in X_train.columns:
     if c not in [feature_x, feature_y]:
         grid[c] = X_mean[c]
 synth_const_pred = predict_ann(grid)
 
-# Synthetic (free features)
+# Synthetic (free as-is)
 synth_free_pred = predict_ann(synth_filtered)
 
 # Real (actual features)
 real_pred = predict_ann(real_df)
 
 # -----------------------
-# 8️⃣ Error Computation
+# 7️⃣ Match Values & Errors
 # -----------------------
 y_real = matched_real[target_option].values
 y_synth = matched_synth[target_option].values
 abs_error = np.abs(y_real - y_synth)
 percent_error = abs_error / (np.abs(y_real) + 1e-8) * 100
-global_mape = np.mean(percent_error)
+mape = np.mean(percent_error)
 local_mape = np.mean(percent_error)
 
 # -----------------------
-# 9️⃣ Shared Color Scale
+# 8️⃣ Shared Color Scale
 # -----------------------
 zmin = min(y_real.min(), y_synth.min(), synth_const_pred.min(), synth_free_pred.min())
 zmax = max(y_real.max(), y_synth.max(), synth_const_pred.max(), synth_free_pred.max())
 
 # -----------------------
-# 🔟 Scatter Plots
+# 9️⃣ Plots
 # -----------------------
 st.markdown("## 🎨 Scatter Plots Comparison")
 
 col1, col2, col3 = st.columns(3)
 
-# Synthetic (Constant Mean)
+# Synthetic (constant)
 with col1:
     st.subheader("🟡 Synthetic (Constant Mean)")
     fig1 = px.scatter(
@@ -158,7 +133,7 @@ with col1:
     fig1.update_traces(marker=dict(size=6, line=dict(width=0.5, color='black')))
     st.plotly_chart(fig1, use_container_width=True)
 
-# Synthetic (Free Features)
+# Synthetic (free)
 with col2:
     st.subheader("🔵 Synthetic (Free Features)")
     fig2 = px.scatter(
@@ -169,7 +144,7 @@ with col2:
     fig2.update_traces(marker=dict(size=6, line=dict(width=0.5, color='black')))
     st.plotly_chart(fig2, use_container_width=True)
 
-# Real Data
+# Real
 with col3:
     st.subheader("🟢 Real Data (Actual)")
     fig3 = px.scatter(
@@ -181,10 +156,9 @@ with col3:
     st.plotly_chart(fig3, use_container_width=True)
 
 # -----------------------
-# 11️⃣ RSM Contour
+# 🔟 Response Surface Plot
 # -----------------------
 st.markdown("## 🌀 Response Surface (Predicted Surface)")
-
 f1_range = np.linspace(x_range[0], x_range[1], 80)
 f2_range = np.linspace(y_range[0], y_range[1], 80)
 F1, F2 = np.meshgrid(f1_range, f2_range)
@@ -196,9 +170,8 @@ for c in X_train.columns:
 grid_pred = predict_ann(grid_surface).reshape(F1.shape)
 
 fig_rsm = go.Figure(data=go.Contour(
-    z=grid_pred, x=f1_range, y=f2_range,
-    colorscale="RdYlGn_r", ncontours=25,
-    colorbar=dict(title=f"{target_option}"),
+    z=grid_pred, x=f1_range, y=f2_range, colorscale="RdYlGn_r",
+    ncontours=25, colorbar=dict(title=f"{target_option}"),
     contours=dict(showlabels=True, labelfont=dict(size=12, color="black"))
 ))
 fig_rsm.add_trace(go.Scatter(
@@ -208,13 +181,12 @@ fig_rsm.add_trace(go.Scatter(
 ))
 fig_rsm.update_layout(
     title=f"RSM Surface — {target_option} vs {feature_x}, {feature_y}",
-    xaxis_title=feature_x, yaxis_title=feature_y,
-    template="plotly_white"
+    xaxis_title=feature_x, yaxis_title=feature_y, template="plotly_white"
 )
 st.plotly_chart(fig_rsm, use_container_width=True)
 
 # -----------------------
-# 12️⃣ Donut Charts + Data Table
+# 11️⃣ Donut Charts & Table
 # -----------------------
 col4, col5 = st.columns(2)
 
@@ -224,10 +196,10 @@ with col4:
     with donut_cols[0]:
         fig_mape = go.Figure(data=[go.Pie(
             labels=['MAPE (%)', 'Accuracy (%)'],
-            values=[global_mape, 100 - global_mape], hole=0.6,
+            values=[mape, 100 - mape], hole=0.6,
             marker_colors=['#EF553B', '#00CC96']
         )])
-        fig_mape.update_layout(title_text=f"Global MAPE: {global_mape:.2f}%", showlegend=False, height=250)
+        fig_mape.update_layout(title_text=f"Global MAPE: {mape:.2f}%", showlegend=False, height=250)
         st.plotly_chart(fig_mape, use_container_width=True)
     with donut_cols[1]:
         fig_local = go.Figure(data=[go.Pie(
@@ -250,15 +222,13 @@ with col5:
     }).sort_values("Percent_Error")
     st.dataframe(comparison_df, use_container_width=True, height=300)
 
-# -----------------------
-# 13️⃣ Summary Info
-# -----------------------
 st.info(f"""
 **Target:** `{target_option}` | **X:** `{feature_x}` | **Y:** `{feature_y}`  
 **Threshold:** ±{threshold_percent:.1f}% feature range | **Matches Found:** {len(matched_synth)}  
-**Global MAPE:** {global_mape:.2f}% | **Local Error:** {local_mape:.2f}%  
+**Global MAPE:** {mape:.2f}% | **Local Error:** {local_mape:.2f}%  
 **All other features fixed at their mean values for the contour surface.**
 """)
+
 
 
 
