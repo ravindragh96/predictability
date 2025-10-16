@@ -45,6 +45,264 @@ x_scaler = joblib.load(X_SCALER_PATH)
 y_scaler = joblib.load(Y_SCALER_PATH)
 
 # -----------------------
+# Sidebar Controls
+# -----------------------
+st.sidebar.header("⚙️ Controls")
+
+feature_cols = list(X_train.columns)
+target_cols = list(y_train.columns)
+
+feature_x = st.sidebar.selectbox("Select X-Axis Feature", ["-- Choose X column --"] + feature_cols, index=0)
+feature_y = st.sidebar.selectbox("Select Y-Axis Feature", ["-- Choose Y column --"] + feature_cols, index=0)
+if feature_x.startswith("--") or feature_y.startswith("--"):
+    st.warning("⚠️ Please choose both X and Y columns to continue.")
+    st.stop()
+if feature_x == feature_y:
+    st.warning("⚠️ X and Y features must be different.")
+    st.stop()
+target_option = st.sidebar.selectbox("Select Target Output", target_cols)
+
+x_min, x_max = float(synth_df[feature_x].min()), float(synth_df[feature_x].max())
+y_min, y_max = float(synth_df[feature_y].min()), float(synth_df[feature_y].max())
+x_range = st.sidebar.slider(f"{feature_x} Range", x_min, x_max, (x_min, x_max))
+y_range = st.sidebar.slider(f"{feature_y} Range", y_min, y_max, (y_min, y_max))
+
+# -----------------------
+# Helper functions
+# -----------------------
+def predict_ann(df):
+    df_aligned = df[X_train.columns].copy()
+    scaled = x_scaler.transform(df_aligned.astype(np.float32))
+    preds_scaled = model.predict(scaled, verbose=0)
+    preds = y_scaler.inverse_transform(preds_scaled)
+    return preds[:, y_train.columns.get_loc(target_option)]
+
+X_mean = X_train.mean(numeric_only=True)
+
+synth_filtered = synth_df[
+    (synth_df[feature_x] >= x_range[0]) & (synth_df[feature_x] <= x_range[1]) &
+    (synth_df[feature_y] >= y_range[0]) & (synth_df[feature_y] <= y_range[1])
+].reset_index(drop=True)
+
+grid_const = synth_filtered.copy()
+for c in X_train.columns:
+    if c not in [feature_x, feature_y]:
+        grid_const[c] = X_mean[c]
+
+synth_const_pred = predict_ann(grid_const)
+synth_free_pred = predict_ann(synth_filtered)
+
+sampled_real = real_df.sample(n=10, random_state=42).copy()
+sampled_real_for_const = sampled_real.assign(**{c: X_mean[c] for c in X_train.columns if c not in [feature_x, feature_y]})
+sampled_real["Pred_Const"] = predict_ann(sampled_real_for_const)
+sampled_real["Pred_Free"] = predict_ann(sampled_real)
+sampled_real["Error_Const(%)"] = np.abs(sampled_real[target_option] - sampled_real["Pred_Const"]) / (
+    np.abs(sampled_real[target_option]) + 1e-8) * 100
+sampled_real["Error_Free(%)"] = np.abs(sampled_real[target_option] - sampled_real["Pred_Free"]) / (
+    np.abs(sampled_real[target_option]) + 1e-8) * 100
+
+hover_card = (
+    f"<b>{feature_x}</b>: %{{x:.3f}}<br>"
+    f"<b>{feature_y}</b>: %{{y:.3f}}<br>"
+    f"<b>Actual {target_option}</b>: %{{customdata[0]:.3f}}<br>"
+    f"<b>Pred(Const)</b>: %{{customdata[1]:.3f}}<br>"
+    f"<b>Pred(Free)</b>: %{{customdata[2]:.3f}}<extra></extra>"
+)
+
+zmin = min(real_df[target_option].min(), synth_const_pred.min(), synth_free_pred.min())
+zmax = max(real_df[target_option].max(), synth_const_pred.max(), synth_free_pred.max())
+
+# -----------------------
+# 🟣 Row 1: Synthetic Free (with Real overlay) | Real Scatter
+# -----------------------
+st.markdown("## 🧩 Synthetic vs Real — Direct Comparison")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.subheader("🔵 Synthetic — Free Features (with Real Overlay)")
+    fig_free = px.scatter(
+        x=synth_filtered[feature_x], y=synth_filtered[feature_y],
+        color=synth_free_pred,
+        color_continuous_scale="RdYlGn_r",
+        range_color=[zmin, zmax],
+        labels={feature_x: feature_x, feature_y: feature_y, "color": target_option}
+    )
+    # Overlay Real Data points (purple-blue diamond markers)
+    fig_free.add_trace(go.Scatter(
+        x=real_df[feature_x],
+        y=real_df[feature_y],
+        mode="markers",
+        marker=dict(
+            size=6,
+            symbol="diamond",
+            color=real_df[target_option],
+            colorscale="Viridis",  # purple-blue scale like your real plot
+            line=dict(width=0.6, color="black"),
+            opacity=0.9,
+            colorbar=dict(title=target_option)
+        ),
+        name="Real Data Overlay"
+    ))
+    fig_free.update_layout(xaxis_title=feature_x, yaxis_title=feature_y)
+    st.plotly_chart(fig_free, use_container_width=True)
+
+with col2:
+    st.subheader("🟢 Real Data — Actual")
+    fig_real = px.scatter(
+        x=real_df[feature_x],
+        y=real_df[feature_y],
+        color=real_df[target_option],
+        color_continuous_scale="Viridis",
+        range_color=[zmin, zmax],
+        labels={feature_x: feature_x, feature_y: feature_y, "color": target_option}
+    )
+    fig_real.update_traces(marker=dict(size=6, symbol="diamond", line=dict(width=0.5, color="black")))
+    st.plotly_chart(fig_real, use_container_width=True)
+
+# -----------------------
+# 🟡 Row 2: Synthetic Constant | Error Metrics
+# -----------------------
+st.markdown("## ⚙️ Model Evaluation — Constant vs Free")
+
+col3, col4 = st.columns([2, 1])
+
+with col3:
+    st.subheader("🟡 Synthetic — Constant Mean")
+    fig_const = px.scatter(
+        x=synth_filtered[feature_x],
+        y=synth_filtered[feature_y],
+        color=synth_const_pred,
+        color_continuous_scale="RdYlGn_r",
+        range_color=[zmin, zmax],
+        labels={feature_x: feature_x, feature_y: feature_y, "color": target_option}
+    )
+    fig_const.update_layout(xaxis_title=feature_x, yaxis_title=feature_y)
+    st.plotly_chart(fig_const, use_container_width=True)
+
+with col4:
+    st.subheader("📈 Error Metrics")
+    mape_const = sampled_real["Error_Const(%)"].mean()
+    mape_free = sampled_real["Error_Free(%)"].mean()
+    cols_donut = st.columns(2)
+    with cols_donut[0]:
+        fig_d1 = go.Figure(data=[go.Pie(labels=["MAPE", "Accuracy"],
+                                        values=[mape_const, 100 - mape_const],
+                                        hole=0.65, marker_colors=["#EF553B", "#00CC96"])])
+        fig_d1.update_layout(title=dict(text=f"Const: {mape_const:.2f}%", x=0.5),
+                             showlegend=False, height=250)
+        st.plotly_chart(fig_d1, use_container_width=True)
+    with cols_donut[1]:
+        fig_d2 = go.Figure(data=[go.Pie(labels=["MAPE", "Accuracy"],
+                                        values=[mape_free, 100 - mape_free],
+                                        hole=0.65, marker_colors=["#FFA15A", "#19D3F3"])])
+        fig_d2.update_layout(title=dict(text=f"Free: {mape_free:.2f}%", x=0.5),
+                             showlegend=False, height=250)
+        st.plotly_chart(fig_d2, use_container_width=True)
+
+# -----------------------
+# 🌀 Row 3: Full-width RSM Plot
+# -----------------------
+st.markdown("## 🌀 Response Surface Model (Full View)")
+
+f1_range = np.linspace(x_range[0], x_range[1], 120)
+f2_range = np.linspace(y_range[0], y_range[1], 120)
+F1, F2 = np.meshgrid(f1_range, f2_range)
+grid_surface = pd.DataFrame({feature_x: F1.ravel(), feature_y: F2.ravel()})
+for c in X_train.columns:
+    if c not in [feature_x, feature_y]:
+        grid_surface[c] = X_mean[c]
+grid_pred = predict_ann(grid_surface).reshape(F1.shape)
+
+fig_rsm = go.Figure(go.Contour(
+    x=f1_range, y=f2_range, z=grid_pred,
+    colorscale=[
+        [0.0, "#006837"], [0.25, "#66BB6A"], [0.5, "#FFF176"],
+        [0.75, "#FF8F00"], [1.0, "#B71C1C"]
+    ],
+    contours=dict(showlabels=True, labelfont=dict(size=10, color="black")),
+    colorbar=dict(title=dict(text=target_option), len=0.7),
+    opacity=0.9
+))
+fig_rsm.add_trace(go.Scatter(
+    x=synth_filtered[feature_x], y=synth_filtered[feature_y],
+    mode="markers", marker=dict(size=5, color="white", line=dict(width=0.5, color="black")),
+    name="Synthetic Points"
+))
+fig_rsm.add_trace(go.Scatter(
+    x=sampled_real[feature_x], y=sampled_real[feature_y],
+    mode="markers", marker=dict(size=14, color="blue", symbol="star", line=dict(width=1, color="black")),
+    name="Sampled Real"
+))
+fig_rsm.update_layout(
+    title=dict(text=f"RSM Surface — {target_option} vs {feature_x} & {feature_y}", x=0.45, font=dict(size=17)),
+    xaxis=dict(title=feature_x), yaxis=dict(title=feature_y),
+    height=700
+)
+st.plotly_chart(fig_rsm, use_container_width=True)
+
+# -----------------------
+# 📋 Row 4: Data Table
+# -----------------------
+st.markdown("## 🔍 Validation Data Summary")
+df_summary = sampled_real[[feature_x, feature_y, target_option, "Pred_Const", "Pred_Free",
+                           "Error_Const(%)", "Error_Free(%)"]].copy()
+df_summary.rename(columns={target_option: f"Actual_{target_option}"}, inplace=True)
+st.dataframe(df_summary.style.format("{:.3f}"), use_container_width=True, height=320)
+
+st.info(f"Target: {target_option} | X: {feature_x} | Y: {feature_y}")
+
+
+
+
+
+#!/usr/bin/env python
+# coding: utf-8
+
+import os
+import numpy as np
+import pandas as pd
+import streamlit as st
+import plotly.graph_objects as go
+import plotly.express as px
+import tensorflow as tf
+import joblib
+import plotly.io as pio
+
+# -----------------------
+# Global Plotly Style
+# -----------------------
+pio.templates.default = "plotly_white"
+
+# -----------------------
+# 1️⃣ Setup
+# -----------------------
+st.set_page_config(page_title="RSM Dashboard", layout="wide")
+st.title("🎛️ Response Surface Modeling (RSM) — Real vs Synthetic Comparison")
+
+BASE_DIR = r"C:\Users\gantrav01\RD_predictability_11925"
+
+TRAIN_X_PATH = os.path.join(BASE_DIR, "H_vs_Tau_training.xlsx")
+TRAIN_Y_PATH = os.path.join(BASE_DIR, "H_vs_Tau_target.xlsx")
+REAL_PATH = os.path.join(BASE_DIR, "Copy of T33_100_Samples_for_testing.xlsx")
+SYNTH_PATH = os.path.join(BASE_DIR, "synthetic_tau_98.xlsx")
+MODEL_PATH = os.path.join(BASE_DIR, "checkpoints", "h_vs_tau_best_model.keras")
+X_SCALER_PATH = os.path.join(BASE_DIR, "x_eta_scaler.pkl")
+Y_SCALER_PATH = os.path.join(BASE_DIR, "y_eta_scaler.pkl")
+
+# -----------------------
+# 2️⃣ Load Data & Model
+# -----------------------
+X_train = pd.read_excel(TRAIN_X_PATH)
+y_train = pd.read_excel(TRAIN_Y_PATH)
+real_df = pd.read_excel(REAL_PATH)
+synth_df = pd.read_excel(SYNTH_PATH)
+
+model = tf.keras.models.load_model(MODEL_PATH, compile=False)
+x_scaler = joblib.load(X_SCALER_PATH)
+y_scaler = joblib.load(Y_SCALER_PATH)
+
+# -----------------------
 # 3️⃣ Sidebar Controls
 # -----------------------
 st.sidebar.header("⚙️ Controls")
