@@ -1,3 +1,98 @@
+# -----------------------
+# 🌀 Row 3 — RSM (75%) | Error metrics (25%)
+# -----------------------
+st.markdown("## 🌀 RSM Surface & Error Metrics")
+
+col5, col6 = st.columns([3, 1])
+
+# RSM contour
+with col5:
+    st.subheader("🌀 Response Surface Model (RSM) — With Data Points")
+    
+    # Generate grid for contour surface
+    f1 = np.linspace(real_df[feature_x].min(), real_df[feature_x].max(), 120)
+    f2 = np.linspace(real_df[feature_y].min(), real_df[feature_y].max(), 120)
+    F1, F2 = np.meshgrid(f1, f2)
+    grid_surface = pd.DataFrame({feature_x: F1.ravel(), feature_y: F2.ravel()})
+    for c in X_train.columns:
+        if c not in [feature_x, feature_y]:
+            grid_surface[c] = X_mean[c]
+    grid_pred = predict_ann(grid_surface).reshape(F1.shape)
+    
+    # Create RSM contour
+    fig_rsm = go.Figure()
+    fig_rsm.add_trace(go.Contour(
+        x=f1, y=f2, z=grid_pred,
+        colorscale=[
+            [0.0, "#006837"], [0.25, "#66BB6A"], [0.5, "#FFF176"],
+            [0.75, "#FF8F00"], [1.0, "#B71C1C"]
+        ],
+        contours=dict(showlabels=True, labelfont=dict(size=10, color="black")),
+        colorbar=dict(title=dict(text=target_option), len=0.7),
+        opacity=0.85,
+        name="RSM Surface"
+    ))
+
+    # Overlay synthetic data points (white circles)
+    fig_rsm.add_trace(go.Scatter(
+        x=synth_df[feature_x],
+        y=synth_df[feature_y],
+        mode="markers",
+        marker=dict(size=5, color="white", line=dict(width=0.5, color="black")),
+        name="Synthetic Points",
+        hoverinfo="skip"
+    ))
+
+    # Overlay real data points (purple diamonds)
+    fig_rsm.add_trace(go.Scatter(
+        x=real_df[feature_x],
+        y=real_df[feature_y],
+        mode="markers",
+        marker=dict(size=8, color="#8000FF", symbol="diamond", line=dict(width=1, color="white")),
+        customdata=np.stack([real_df[target_option], real_df["Synthetic_T1_Pred"]], axis=-1),
+        hovertemplate=(
+            f"<b>{feature_x}</b>: %{{x:.3f}}<br>"
+            f"<b>{feature_y}</b>: %{{y:.3f}}<br>"
+            f"<b>Actual {target_option}</b>: %{{customdata[0]:.3f}}<br>"
+            f"<b>Synthetic {target_option}</b>: %{{customdata[1]:.3f}}<extra></extra>"
+        ),
+        name="Real Data Points"
+    ))
+
+    # Layout
+    fig_rsm.update_layout(
+        title=dict(text=f"RSM Surface — {target_option} vs {feature_x} & {feature_y}", x=0.45, font=dict(size=17)),
+        xaxis=dict(title=feature_x, showgrid=True),
+        yaxis=dict(title=feature_y, showgrid=True),
+        margin=dict(l=60, r=60, t=50, b=50),
+        height=650,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom", y=1.02,
+            xanchor="right", x=1
+        )
+    )
+
+    st.plotly_chart(fig_rsm, use_container_width=True)
+
+# Donuts (unchanged)
+with col6:
+    st.subheader("📈 Error Metrics Overview")
+    mape = real_df["Error(%)"].mean()
+    acc = 100 - mape
+    fig_donut = go.Figure(data=[go.Pie(
+        labels=["MAPE (%)", "Accuracy (%)"],
+        values=[mape, acc],
+        hole=0.65,
+        marker_colors=["#EF553B", "#00CC96"]
+    )])
+    fig_donut.update_layout(showlegend=False, title=dict(text=f"Mean Error: {mape:.2f}%", x=0.5), height=300)
+    st.plotly_chart(fig_donut, use_container_width=True)
+
+
+
+
+
 #!/usr/bin/env python
 # coding: utf-8
 import os
