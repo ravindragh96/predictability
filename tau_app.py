@@ -1,5 +1,236 @@
 #!/usr/bin/env python
 # coding: utf-8
+import os
+import numpy as np
+import pandas as pd
+import streamlit as st
+import plotly.graph_objects as go
+import plotly.express as px
+import tensorflow as tf
+import joblib
+import plotly.io as pio
+
+# -----------------------
+# Global setup
+# -----------------------
+pio.templates.default = "plotly_white"
+st.set_page_config(page_title="RSM Dashboard", layout="wide")
+st.title("🎛️ Response Surface Modeling — Synthetic vs Real Trend Analysis")
+
+# -----------------------
+# Paths
+# -----------------------
+BASE_DIR = r"C:\Users\gantrav01\RD_predictability_11925"
+TRAIN_X_PATH = os.path.join(BASE_DIR, "H_vs_Tau_training.xlsx")
+TRAIN_Y_PATH = os.path.join(BASE_DIR, "H_vs_Tau_target.xlsx")
+REAL_PATH = os.path.join(BASE_DIR, "Copy of T33_100_Samples_for_testing.xlsx")
+SYNTH_PATH = os.path.join(BASE_DIR, "synthetic_tau_98.xlsx")
+MODEL_PATH = os.path.join(BASE_DIR, "checkpoints", "h_vs_tau_best_model.keras")
+X_SCALER_PATH = os.path.join(BASE_DIR, "x_eta_scaler.pkl")
+Y_SCALER_PATH = os.path.join(BASE_DIR, "y_eta_scaler.pkl")
+
+# -----------------------
+# Load data & model
+# -----------------------
+X_train = pd.read_excel(TRAIN_X_PATH)
+y_train = pd.read_excel(TRAIN_Y_PATH)
+real_df = pd.read_excel(REAL_PATH)
+synth_df = pd.read_excel(SYNTH_PATH)
+
+model = tf.keras.models.load_model(MODEL_PATH, compile=False)
+x_scaler = joblib.load(X_SCALER_PATH)
+y_scaler = joblib.load(Y_SCALER_PATH)
+
+# -----------------------
+# Sidebar controls
+# -----------------------
+st.sidebar.header("⚙️ Controls")
+
+feature_cols = list(X_train.columns)
+target_cols = list(y_train.columns)
+
+feature_x = st.sidebar.selectbox("Select X-Axis Feature", ["-- Choose X column --"] + feature_cols, index=0)
+feature_y = st.sidebar.selectbox("Select Y-Axis Feature", ["-- Choose Y column --"] + feature_cols, index=0)
+if feature_x.startswith("--") or feature_y.startswith("--"):
+    st.warning("⚠️ Please choose both X and Y columns to continue.")
+    st.stop()
+if feature_x == feature_y:
+    st.warning("⚠️ X and Y features must be different.")
+    st.stop()
+target_option = st.sidebar.selectbox("Select Target Output", target_cols)
+
+# -----------------------
+# Helper: model prediction
+# -----------------------
+def predict_ann(df):
+    df_aligned = df[X_train.columns].copy()
+    scaled = x_scaler.transform(df_aligned.astype(np.float32))
+    preds_scaled = model.predict(scaled, verbose=0)
+    preds = y_scaler.inverse_transform(preds_scaled)
+    return preds[:, y_train.columns.get_loc(target_option)]
+
+X_mean = X_train.mean(numeric_only=True)
+
+# Predictions
+real_df["Synthetic_T1_Pred"] = predict_ann(real_df)
+synth_df["Synthetic_T1_Pred"] = predict_ann(synth_df)
+
+# Errors
+real_df["Error(%)"] = np.abs(real_df[target_option] - real_df["Synthetic_T1_Pred"]) / (
+    np.abs(real_df[target_option]) + 1e-8
+) * 100
+
+# Shared scale
+zmin = min(real_df[target_option].min(), synth_df["Synthetic_T1_Pred"].min())
+zmax = max(real_df[target_option].max(), synth_df["Synthetic_T1_Pred"].max())
+
+# Hover
+hover_temp = (
+    f"<b>{feature_x}</b>: %{{x:.3f}}<br>"
+    f"<b>{feature_y}</b>: %{{y:.3f}}<br>"
+    f"<b>Actual {target_option}</b>: %{{customdata[0]:.3f}}<br>"
+    f"<b>Synthetic {target_option}</b>: %{{customdata[1]:.3f}}<extra></extra>"
+)
+
+# -----------------------
+# 🟢 Row 1 — Synthetic (real coords) | Real actual
+# -----------------------
+st.markdown("## 🧩 Real-Coordinate Comparison")
+
+col1, col2 = st.columns(2)
+
+# Left: Synthetic predictions at real coordinates
+with col1:
+    st.subheader("🟢 Synthetic Free — Predictions at Real Coordinates")
+    fig_syn_real = px.scatter(
+        x=real_df[feature_x],
+        y=real_df[feature_y],
+        color=real_df["Synthetic_T1_Pred"],
+        color_continuous_scale="RdYlGn_r",
+        range_color=[zmin, zmax],
+        labels={feature_x: feature_x, feature_y: feature_y, "color": f"Synthetic {target_option}"}
+    )
+    fig_syn_real.update_traces(
+        marker=dict(size=8, symbol="circle", line=dict(width=0.6, color="black")),
+        customdata=np.stack([real_df[target_option], real_df["Synthetic_T1_Pred"]], axis=-1),
+        hovertemplate=hover_temp
+    )
+    fig_syn_real.update_layout(xaxis_title=feature_x, yaxis_title=feature_y)
+    st.plotly_chart(fig_syn_real, use_container_width=True)
+
+# Right: Real actual
+with col2:
+    st.subheader("🟣 Real Data — Actual T1")
+    fig_real = px.scatter(
+        x=real_df[feature_x],
+        y=real_df[feature_y],
+        color=real_df[target_option],
+        color_continuous_scale="Viridis",
+        range_color=[zmin, zmax],
+        labels={feature_x: feature_x, feature_y: feature_y, "color": f"Actual {target_option}"}
+    )
+    fig_real.update_traces(
+        marker=dict(size=8, symbol="diamond", line=dict(width=0.6, color="white")),
+        customdata=np.stack([real_df[target_option], real_df["Synthetic_T1_Pred"]], axis=-1),
+        hovertemplate=hover_temp
+    )
+    fig_real.update_layout(xaxis_title=feature_x, yaxis_title=feature_y)
+    st.plotly_chart(fig_real, use_container_width=True)
+
+# -----------------------
+# 🔵 Row 2 — All synthetic | Table
+# -----------------------
+st.markdown("## 🧮 Synthetic Dataset Distribution & Validation Report")
+
+col3, col4 = st.columns([1.3, 1])
+
+with col3:
+    st.subheader("🔵 Synthetic Dataset — All Points")
+    fig_synth_all = px.scatter(
+        x=synth_df[feature_x],
+        y=synth_df[feature_y],
+        color=synth_df["Synthetic_T1_Pred"],
+        color_continuous_scale="RdYlGn_r",
+        range_color=[zmin, zmax],
+        labels={feature_x: feature_x, feature_y: feature_y, "color": f"Synthetic {target_option}"}
+    )
+    fig_synth_all.update_traces(marker=dict(size=6, line=dict(width=0.4, color="black")))
+    st.plotly_chart(fig_synth_all, use_container_width=True)
+
+with col4:
+    st.subheader("📋 Validation Table — Real vs Synthetic Predictions")
+    df_summary = real_df[[feature_x, feature_y, target_option, "Synthetic_T1_Pred", "Error(%)"]].copy()
+    df_summary.rename(
+        columns={target_option: f"Actual_{target_option}", "Synthetic_T1_Pred": f"Synthetic_{target_option}"},
+        inplace=True,
+    )
+    st.dataframe(df_summary.style.format("{:.3f}"), use_container_width=True, height=350)
+
+# -----------------------
+# 🌀 Row 3 — RSM (75%) | Error metrics (25%)
+# -----------------------
+st.markdown("## 🌀 RSM Surface & Error Metrics")
+
+col5, col6 = st.columns([3, 1])
+
+# RSM contour
+with col5:
+    st.subheader("🌀 Response Surface Model (RSM)")
+    f1 = np.linspace(real_df[feature_x].min(), real_df[feature_x].max(), 120)
+    f2 = np.linspace(real_df[feature_y].min(), real_df[feature_y].max(), 120)
+    F1, F2 = np.meshgrid(f1, f2)
+    grid_surface = pd.DataFrame({feature_x: F1.ravel(), feature_y: F2.ravel()})
+    for c in X_train.columns:
+        if c not in [feature_x, feature_y]:
+            grid_surface[c] = X_mean[c]
+    grid_pred = predict_ann(grid_surface).reshape(F1.shape)
+    fig_rsm = go.Figure(go.Contour(
+        x=f1, y=f2, z=grid_pred,
+        colorscale=[ [0.0,"#006837"], [0.25,"#66BB6A"], [0.5,"#FFF176"], [0.75,"#FF8F00"], [1.0,"#B71C1C"] ],
+        contours=dict(showlabels=True, labelfont=dict(size=10, color="black")),
+        colorbar=dict(title=dict(text=target_option), len=0.7),
+        opacity=0.9
+    ))
+    fig_rsm.update_layout(
+        xaxis_title=feature_x, yaxis_title=feature_y,
+        height=650, margin=dict(l=60, r=60, t=50, b=50)
+    )
+    st.plotly_chart(fig_rsm, use_container_width=True)
+
+# Donuts
+with col6:
+    st.subheader("📈 Error Metrics Overview")
+    mape = real_df["Error(%)"].mean()
+    acc = 100 - mape
+    fig_donut = go.Figure(data=[go.Pie(
+        labels=["MAPE (%)", "Accuracy (%)"],
+        values=[mape, acc],
+        hole=0.65,
+        marker_colors=["#EF553B", "#00CC96"]
+    )])
+    fig_donut.update_layout(showlegend=False, title=dict(text=f"Mean Error: {mape:.2f}%", x=0.5), height=300)
+    st.plotly_chart(fig_donut, use_container_width=True)
+
+# -----------------------
+# Footer
+# -----------------------
+st.info(f"Target: {target_option} | X: {feature_x} | Y: {feature_y} | Real Records: {len(real_df)} | Synthetic Records: {len(synth_df)}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+#++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#!/usr/bin/env python
+# coding: utf-8
 
 import os
 import numpy as np
